@@ -3,15 +3,24 @@ from app.policy import MAX_MARGIN_MULTIPLIER, MAX_POSITION_PCT, MAX_TOTAL_EXPOSU
 from app.sizing import calculate_position_size
 
 
+def build_guard_plan(payload: RiskCheckRequest, quantity: float) -> dict:
+    exit_side = 'sell' if payload.side == 'buy' else 'buy'
+    return {
+        'account_id': payload.account_id,
+        'symbol': payload.symbol,
+        'side': exit_side,
+        'quantity': quantity,
+        'trigger_price': payload.protection_price,
+        'time_in_force': 'GTC',
+    }
+
+
 def check_order(payload: RiskCheckRequest) -> StandardResponse:
     violations = []
     warnings = []
 
     if payload.side == 'hold':
-        return StandardResponse(
-            status='approved',
-            data={'approved': True, 'approved_quantity': 0.0, 'violations': [], 'warnings': []},
-        )
+        return StandardResponse(status='approved', data={'approved': True, 'approved_quantity': 0.0, 'guard_plan': None, 'violations': [], 'warnings': []})
 
     position_value = payload.entry_price * payload.requested_quantity
     max_position_value = payload.equity * MAX_POSITION_PCT
@@ -36,23 +45,8 @@ def check_order(payload: RiskCheckRequest) -> StandardResponse:
             warnings.append('requested_quantity_above_safe_size')
 
     approved = len(violations) == 0
-    if max_position_value == 0:
-        risk_score = 1.0
-    else:
-        risk_score = min(1.0, position_value / max_position_value)
+    risk_score = 1.0 if max_position_value == 0 else min(1.0, position_value / max_position_value)
+    final_quantity = min(payload.requested_quantity, approved_quantity)
+    guard_plan = build_guard_plan(payload, final_quantity) if approved and final_quantity > 0 else None
 
-    return StandardResponse(
-        status='approved' if approved else 'rejected',
-        data={
-            'approved': approved,
-            'risk_score': round(risk_score, 4),
-            'approved_quantity': approved_quantity,
-            'max_position_value': round(max_position_value, 2),
-            'max_total_exposure': round(max_total, 2),
-            'position_value': round(position_value, 2),
-            'protection_required': True,
-            'violations': violations,
-            'warnings': warnings,
-        },
-        error=None if approved else 'risk_check_failed',
-    )
+    return StandardResponse(status='approved' if approved else 'rejected', data={'approved': approved, 'risk_score': round(risk_score, 4), 'approved_quantity': approved_quantity, 'final_quantity': final_quantity, 'max_position_value': round(max_position_value, 2), 'max_total_exposure': round(max_total, 2), 'position_value': round(position_value, 2), 'protection_required': True, 'guard_plan': guard_plan, 'violations': violations, 'warnings': warnings}, error=None if approved else 'risk_check_failed')
