@@ -23,7 +23,9 @@ def test_position_size_uses_safe_limit():
     body = response.json()
     assert response.status_code == 200
     assert body['status'] == 'success'
-    assert body['data']['approved_quantity'] == 20
+    assert body['data']['approved_quantity'] == 10
+    assert body['data']['max_position_value'] == 1000
+    assert body['data']['max_loss_amount'] == 100
 
 
 def test_rejects_large_position():
