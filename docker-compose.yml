@@ -1,0 +1,7 @@
+services:
+  risk-agent:
+    build: .
+    container_name: risk-agent
+    ports:
+      - "8007:8007"
+    restart: unless-stopped
