@@ -1,0 +1,12 @@
+{
+  "account_id": 1,
+  "symbol": "AAPL",
+  "side": "buy",
+  "entry_price": 100,
+  "protection_price": 95,
+  "requested_quantity": 20,
+  "equity": 10000,
+  "current_symbol_exposure": 0,
+  "current_total_exposure": 0,
+  "margin_multiplier": 1
+}
