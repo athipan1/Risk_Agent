@@ -82,7 +82,7 @@ def test_open_orders_exposure_counts_toward_portfolio_limit():
         'requested_quantity': 5,
         'equity': 10000,
         'current_symbol_exposure': 0,
-        'current_total_exposure': 7000,
+        'current_total_exposure': 9500,
         'open_orders_exposure': 600,
         'margin_multiplier': 1,
         'trading_mode': 'LIVE',
@@ -92,7 +92,7 @@ def test_open_orders_exposure_counts_toward_portfolio_limit():
     assert response.status_code == 200
     assert body['status'] == 'rejected'
     assert 'portfolio_exposure_limit_exceeded' in body['data']['violations']
-    assert body['data']['projected_total_exposure'] == 8100
+    assert body['data']['projected_total_exposure'] == 10600
     assert body['data']['trading_mode'] == 'LIVE'
 
 
