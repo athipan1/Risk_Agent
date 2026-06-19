@@ -12,6 +12,7 @@ def build_guard_plan(payload: RiskCheckRequest, quantity: float) -> dict:
         'quantity': quantity,
         'trigger_price': payload.protection_price,
         'time_in_force': 'GTC',
+        'trading_mode': payload.trading_mode,
     }
 
 
@@ -27,13 +28,16 @@ def check_order(payload: RiskCheckRequest) -> StandardResponse:
     if position_value > max_position_value:
         violations.append('position_size_limit_exceeded')
 
-    projected_total = payload.current_total_exposure + position_value
+    projected_total = payload.current_total_exposure + payload.open_orders_exposure + position_value
     max_total = payload.equity * MAX_TOTAL_EXPOSURE_PCT
     if projected_total > max_total:
         violations.append('portfolio_exposure_limit_exceeded')
 
     if payload.margin_multiplier > MAX_MARGIN_MULTIPLIER:
         violations.append('margin_multiplier_limit_exceeded')
+
+    if payload.trading_mode == 'LIVE' and payload.open_orders_exposure < 0:
+        violations.append('invalid_open_orders_exposure')
 
     sizing = calculate_position_size(payload)
     approved_quantity = 0.0
@@ -49,4 +53,23 @@ def check_order(payload: RiskCheckRequest) -> StandardResponse:
     final_quantity = min(payload.requested_quantity, approved_quantity)
     guard_plan = build_guard_plan(payload, final_quantity) if approved and final_quantity > 0 else None
 
-    return StandardResponse(status='approved' if approved else 'rejected', data={'approved': approved, 'risk_score': round(risk_score, 4), 'approved_quantity': approved_quantity, 'final_quantity': final_quantity, 'max_position_value': round(max_position_value, 2), 'max_total_exposure': round(max_total, 2), 'position_value': round(position_value, 2), 'protection_required': True, 'guard_plan': guard_plan, 'violations': violations, 'warnings': warnings}, error=None if approved else 'risk_check_failed')
+    return StandardResponse(
+        status='approved' if approved else 'rejected',
+        data={
+            'approved': approved,
+            'risk_score': round(risk_score, 4),
+            'approved_quantity': approved_quantity,
+            'final_quantity': final_quantity,
+            'max_position_value': round(max_position_value, 2),
+            'max_total_exposure': round(max_total, 2),
+            'position_value': round(position_value, 2),
+            'open_orders_exposure': round(payload.open_orders_exposure, 2),
+            'projected_total_exposure': round(projected_total, 2),
+            'trading_mode': payload.trading_mode,
+            'protection_required': True,
+            'guard_plan': guard_plan,
+            'violations': violations,
+            'warnings': warnings,
+        },
+        error=None if approved else 'risk_check_failed',
+    )
