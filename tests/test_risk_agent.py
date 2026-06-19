@@ -39,7 +39,9 @@ def test_rejects_large_position():
         'equity': 10000,
         'current_symbol_exposure': 0,
         'current_total_exposure': 0,
+        'open_orders_exposure': 0,
         'margin_multiplier': 1,
+        'trading_mode': 'PAPER',
     }
     response = client.post('/risk/check', json=payload)
     body = response.json()
@@ -59,10 +61,60 @@ def test_rejects_bad_protection_direction():
         'equity': 10000,
         'current_symbol_exposure': 0,
         'current_total_exposure': 0,
+        'open_orders_exposure': 0,
         'margin_multiplier': 1,
+        'trading_mode': 'PAPER',
     }
     response = client.post('/risk/check', json=payload)
     body = response.json()
     assert response.status_code == 200
     assert body['status'] == 'rejected'
     assert 'invalid_protection_direction' in body['data']['violations']
+
+
+def test_open_orders_exposure_counts_toward_portfolio_limit():
+    payload = {
+        'account_id': 1,
+        'symbol': 'AAPL',
+        'side': 'buy',
+        'entry_price': 100,
+        'protection_price': 95,
+        'requested_quantity': 5,
+        'equity': 10000,
+        'current_symbol_exposure': 0,
+        'current_total_exposure': 7000,
+        'open_orders_exposure': 600,
+        'margin_multiplier': 1,
+        'trading_mode': 'LIVE',
+    }
+    response = client.post('/risk/check', json=payload)
+    body = response.json()
+    assert response.status_code == 200
+    assert body['status'] == 'rejected'
+    assert 'portfolio_exposure_limit_exceeded' in body['data']['violations']
+    assert body['data']['projected_total_exposure'] == 8100
+    assert body['data']['trading_mode'] == 'LIVE'
+
+
+def test_accepts_manager_payload_fields_when_within_limits():
+    payload = {
+        'account_id': 1,
+        'symbol': 'AAPL',
+        'side': 'buy',
+        'entry_price': 100,
+        'protection_price': 95,
+        'requested_quantity': 5,
+        'equity': 10000,
+        'current_symbol_exposure': 100,
+        'current_total_exposure': 1000,
+        'open_orders_exposure': 200,
+        'margin_multiplier': 1,
+        'trading_mode': 'PAPER',
+    }
+    response = client.post('/risk/check', json=payload)
+    body = response.json()
+    assert response.status_code == 200
+    assert body['status'] == 'approved'
+    assert body['data']['open_orders_exposure'] == 200
+    assert body['data']['projected_total_exposure'] == 1700
+    assert body['data']['guard_plan']['trading_mode'] == 'PAPER'
