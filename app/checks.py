@@ -2,6 +2,13 @@ from app.models import RiskCheckRequest, StandardResponse
 from app.policy import MAX_MARGIN_MULTIPLIER, MAX_POSITION_PCT, MAX_TOTAL_EXPOSURE_PCT
 from app.sizing import calculate_position_size
 
+LIVE_REQUIRED_CONTEXT_FIELDS = {
+    'current_symbol_exposure',
+    'current_total_exposure',
+    'open_orders_exposure',
+    'margin_multiplier',
+}
+
 
 def build_guard_plan(payload: RiskCheckRequest, quantity: float) -> dict:
     exit_side = 'sell' if payload.side == 'buy' else 'buy'
@@ -16,12 +23,35 @@ def build_guard_plan(payload: RiskCheckRequest, quantity: float) -> dict:
     }
 
 
+def missing_live_context_fields(payload: RiskCheckRequest) -> list[str]:
+    provided_fields = getattr(payload, 'model_fields_set', set())
+    return sorted(LIVE_REQUIRED_CONTEXT_FIELDS - provided_fields)
+
+
 def check_order(payload: RiskCheckRequest) -> StandardResponse:
     violations = []
     warnings = []
 
     if payload.side == 'hold':
         return StandardResponse(status='approved', data={'approved': True, 'approved_quantity': 0.0, 'guard_plan': None, 'violations': [], 'warnings': []})
+
+    if payload.trading_mode == 'LIVE':
+        missing_context = missing_live_context_fields(payload)
+        if missing_context:
+            violations.append('live_context_required')
+            return StandardResponse(
+                status='rejected',
+                data={
+                    'approved': False,
+                    'approved_quantity': 0.0,
+                    'final_quantity': 0.0,
+                    'trading_mode': payload.trading_mode,
+                    'missing_context_fields': missing_context,
+                    'violations': violations,
+                    'warnings': warnings,
+                },
+                error='risk_check_failed',
+            )
 
     position_value = payload.entry_price * payload.requested_quantity
     max_position_value = payload.equity * MAX_POSITION_PCT
@@ -35,9 +65,6 @@ def check_order(payload: RiskCheckRequest) -> StandardResponse:
 
     if payload.margin_multiplier > MAX_MARGIN_MULTIPLIER:
         violations.append('margin_multiplier_limit_exceeded')
-
-    if payload.trading_mode == 'LIVE' and payload.open_orders_exposure < 0:
-        violations.append('invalid_open_orders_exposure')
 
     sizing = calculate_position_size(payload)
     approved_quantity = 0.0
@@ -63,13 +90,15 @@ def check_order(payload: RiskCheckRequest) -> StandardResponse:
             'max_position_value': round(max_position_value, 2),
             'max_total_exposure': round(max_total, 2),
             'position_value': round(position_value, 2),
+            'current_symbol_exposure': round(payload.current_symbol_exposure, 2),
+            'current_total_exposure': round(payload.current_total_exposure, 2),
             'open_orders_exposure': round(payload.open_orders_exposure, 2),
             'projected_total_exposure': round(projected_total, 2),
             'trading_mode': payload.trading_mode,
             'protection_required': True,
             'guard_plan': guard_plan,
             'violations': violations,
-            'warnings': warnings,
+            'warnings': warnings
         },
         error=None if approved else 'risk_check_failed',
     )
