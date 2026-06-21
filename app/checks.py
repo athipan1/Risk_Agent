@@ -1,5 +1,6 @@
 from app.models import RiskCheckRequest, StandardResponse
 from app.policy import MAX_MARGIN_MULTIPLIER, MAX_POSITION_PCT, MAX_TOTAL_EXPOSURE_PCT
+from app.session_limits import check_session_limits
 from app.sizing import calculate_position_size
 
 LIVE_REQUIRED_CONTEXT_FIELDS = {
@@ -7,6 +8,12 @@ LIVE_REQUIRED_CONTEXT_FIELDS = {
     'current_total_exposure',
     'open_orders_exposure',
     'margin_multiplier',
+    'daily_realized_pnl',
+    'weekly_realized_pnl',
+    'consecutive_losses',
+    'trades_today',
+    'symbol_trades_today',
+    'emergency_halt',
 }
 
 
@@ -28,6 +35,20 @@ def missing_live_context_fields(payload: RiskCheckRequest) -> list[str]:
     return sorted(LIVE_REQUIRED_CONTEXT_FIELDS - provided_fields)
 
 
+def _rejected_response(payload: RiskCheckRequest, violations: list[str], warnings: list[str], extra_data: dict | None = None) -> StandardResponse:
+    data = {
+        'approved': False,
+        'approved_quantity': 0.0,
+        'final_quantity': 0.0,
+        'trading_mode': payload.trading_mode,
+        'violations': violations,
+        'warnings': warnings,
+    }
+    if extra_data:
+        data.update(extra_data)
+    return StandardResponse(status='rejected', data=data, error='risk_check_failed')
+
+
 def check_order(payload: RiskCheckRequest) -> StandardResponse:
     violations = []
     warnings = []
@@ -39,19 +60,11 @@ def check_order(payload: RiskCheckRequest) -> StandardResponse:
         missing_context = missing_live_context_fields(payload)
         if missing_context:
             violations.append('live_context_required')
-            return StandardResponse(
-                status='rejected',
-                data={
-                    'approved': False,
-                    'approved_quantity': 0.0,
-                    'final_quantity': 0.0,
-                    'trading_mode': payload.trading_mode,
-                    'missing_context_fields': missing_context,
-                    'violations': violations,
-                    'warnings': warnings,
-                },
-                error='risk_check_failed',
-            )
+            return _rejected_response(payload, violations, warnings, {'missing_context_fields': missing_context})
+
+    session_violations, session_warnings, session_metrics = check_session_limits(payload)
+    violations.extend(session_violations)
+    warnings.extend(session_warnings)
 
     position_value = payload.entry_price * payload.requested_quantity
     max_position_value = payload.equity * MAX_POSITION_PCT
@@ -77,7 +90,7 @@ def check_order(payload: RiskCheckRequest) -> StandardResponse:
 
     approved = len(violations) == 0
     risk_score = 1.0 if max_position_value == 0 else min(1.0, position_value / max_position_value)
-    final_quantity = min(payload.requested_quantity, approved_quantity)
+    final_quantity = min(payload.requested_quantity, approved_quantity) if approved else 0.0
     guard_plan = build_guard_plan(payload, final_quantity) if approved and final_quantity > 0 else None
 
     return StandardResponse(
@@ -97,8 +110,9 @@ def check_order(payload: RiskCheckRequest) -> StandardResponse:
             'trading_mode': payload.trading_mode,
             'protection_required': True,
             'guard_plan': guard_plan,
+            'session_risk': session_metrics,
             'violations': violations,
-            'warnings': warnings
+            'warnings': warnings,
         },
         error=None if approved else 'risk_check_failed',
     )

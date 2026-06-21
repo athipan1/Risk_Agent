@@ -5,6 +5,19 @@ from app.main import app
 client = TestClient(app)
 
 
+def live_session_context():
+    return {
+        'daily_realized_pnl': 0,
+        'weekly_realized_pnl': 0,
+        'consecutive_losses': 0,
+        'trades_today': 0,
+        'symbol_trades_today': 0,
+        'minutes_since_last_loss': 120,
+        'minutes_since_last_symbol_trade': 120,
+        'emergency_halt': False,
+    }
+
+
 def test_health():
     response = client.get('/health')
     assert response.status_code == 200
@@ -90,10 +103,16 @@ def test_live_rejects_missing_context_fields():
     assert body['data']['approved'] is False
     assert 'live_context_required' in body['data']['violations']
     assert body['data']['missing_context_fields'] == [
+        'consecutive_losses',
         'current_symbol_exposure',
         'current_total_exposure',
+        'daily_realized_pnl',
+        'emergency_halt',
         'margin_multiplier',
         'open_orders_exposure',
+        'symbol_trades_today',
+        'trades_today',
+        'weekly_realized_pnl',
     ]
 
 
@@ -111,6 +130,7 @@ def test_live_allows_explicit_zero_context_fields():
         'open_orders_exposure': 0,
         'margin_multiplier': 1,
         'trading_mode': 'LIVE',
+        **live_session_context(),
     }
     response = client.post('/risk/check', json=payload)
     body = response.json()
@@ -153,6 +173,7 @@ def test_open_orders_exposure_counts_toward_portfolio_limit():
         'open_orders_exposure': 600,
         'margin_multiplier': 1,
         'trading_mode': 'LIVE',
+        **live_session_context(),
     }
     response = client.post('/risk/check', json=payload)
     body = response.json()
