@@ -24,6 +24,16 @@ class RiskCheckRequest(PositionSizeRequest):
     margin_multiplier: float = Field(gt=0, default=1)
     trading_mode: TradingMode = 'PAPER'
 
+    # Session/circuit-breaker context supplied by Manager/Database.
+    daily_realized_pnl: float = 0.0
+    weekly_realized_pnl: float = 0.0
+    consecutive_losses: int = Field(ge=0, default=0)
+    trades_today: int = Field(ge=0, default=0)
+    symbol_trades_today: int = Field(ge=0, default=0)
+    minutes_since_last_loss: float | None = Field(default=None, ge=0)
+    minutes_since_last_symbol_trade: float | None = Field(default=None, ge=0)
+    emergency_halt: bool = False
+
 
 class StandardResponse(BaseModel):
     status: str
