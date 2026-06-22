@@ -2,6 +2,7 @@ from app.models import RiskCheckRequest, StandardResponse
 from app.policy import MAX_MARGIN_MULTIPLIER, MAX_POSITION_PCT, MAX_TOTAL_EXPOSURE_PCT
 from app.session_limits import check_session_limits
 from app.sizing import calculate_position_size
+from app.stock_limits import check_stock_limits
 
 LIVE_REQUIRED_CONTEXT_FIELDS = {
     'current_symbol_exposure',
@@ -27,6 +28,7 @@ def build_guard_plan(payload: RiskCheckRequest, quantity: float) -> dict:
         'trigger_price': payload.protection_price,
         'time_in_force': 'GTC',
         'trading_mode': payload.trading_mode,
+        'asset_class': payload.asset_class,
     }
 
 
@@ -41,6 +43,7 @@ def _rejected_response(payload: RiskCheckRequest, violations: list[str], warning
         'approved_quantity': 0.0,
         'final_quantity': 0.0,
         'trading_mode': payload.trading_mode,
+        'asset_class': payload.asset_class,
         'violations': violations,
         'warnings': warnings,
     }
@@ -63,8 +66,11 @@ def check_order(payload: RiskCheckRequest) -> StandardResponse:
             return _rejected_response(payload, violations, warnings, {'missing_context_fields': missing_context})
 
     session_violations, session_warnings, session_metrics = check_session_limits(payload)
+    stock_violations, stock_warnings, stock_metrics = check_stock_limits(payload)
     violations.extend(session_violations)
+    violations.extend(stock_violations)
     warnings.extend(session_warnings)
+    warnings.extend(stock_warnings)
 
     position_value = payload.entry_price * payload.requested_quantity
     max_position_value = payload.equity * MAX_POSITION_PCT
@@ -108,11 +114,13 @@ def check_order(payload: RiskCheckRequest) -> StandardResponse:
             'open_orders_exposure': round(payload.open_orders_exposure, 2),
             'projected_total_exposure': round(projected_total, 2),
             'trading_mode': payload.trading_mode,
+            'asset_class': payload.asset_class,
             'protection_required': True,
             'guard_plan': guard_plan,
             'session_risk': session_metrics,
+            'stock_risk': stock_metrics,
             'violations': violations,
-            'warnings': warnings,
+            'warnings': warnings
         },
         error=None if approved else 'risk_check_failed',
     )
