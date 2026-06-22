@@ -5,6 +5,7 @@ from pydantic import BaseModel, Field
 
 TradeSide = Literal['buy', 'sell', 'hold']
 TradingMode = Literal['PAPER', 'LIVE']
+AssetClass = Literal['stock', 'xauusd', 'crypto', 'multi']
 
 
 class PositionSizeRequest(BaseModel):
@@ -23,6 +24,12 @@ class RiskCheckRequest(PositionSizeRequest):
     open_orders_exposure: float = Field(ge=0, default=0)
     margin_multiplier: float = Field(gt=0, default=1)
     trading_mode: TradingMode = 'PAPER'
+
+    # Stock-first context supplied by Manager/Database.
+    asset_class: AssetClass = 'stock'
+    sector: str | None = None
+    owned_quantity: float = Field(ge=0, default=0)
+    current_sector_exposure: float = Field(ge=0, default=0)
 
     # Session/circuit-breaker context supplied by Manager/Database.
     daily_realized_pnl: float = 0.0
