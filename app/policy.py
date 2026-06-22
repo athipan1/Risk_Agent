@@ -28,6 +28,15 @@ MAX_TOTAL_EXPOSURE_PCT = _env_float('MAX_TOTAL_EXPOSURE_PCT', 1.00)
 MAX_MARGIN_MULTIPLIER = _env_float('MAX_MARGIN_MULTIPLIER', 1.00)
 MIN_PROTECTION_DISTANCE_PCT = _env_float('MIN_PROTECTION_DISTANCE_PCT', 0.002)
 
+# Stock-first controls. Defaults intentionally prefer long-only, no-leverage stock workflows.
+ASSET_CLASS = os.getenv('ASSET_CLASS', 'stock').strip().lower()
+STOCK_ONLY_MODE = _env_bool('STOCK_ONLY_MODE', True)
+ALLOW_SHORT_SELLING = _env_bool('ALLOW_SHORT_SELLING', False)
+ALLOW_FRACTIONAL_SHARES = _env_bool('ALLOW_FRACTIONAL_SHARES', False)
+MAX_SINGLE_STOCK_PCT = _env_float('MAX_SINGLE_STOCK_PCT', 0.10)
+MAX_SECTOR_EXPOSURE_PCT = _env_float('MAX_SECTOR_EXPOSURE_PCT', 0.25)
+MIN_EQUITY_FOR_LIVE_STOCK = _env_float('MIN_EQUITY_FOR_LIVE_STOCK', 1000.0)
+
 # Session / circuit-breaker controls. Defaults are intentionally conservative
 # enough for early tiny-live workflows while remaining paper-trading friendly.
 MAX_DAILY_LOSS_PCT = _env_float('MAX_DAILY_LOSS_PCT', 0.005)
@@ -45,6 +54,13 @@ POLICY = {
     'max_total_exposure_pct': MAX_TOTAL_EXPOSURE_PCT,
     'max_margin_multiplier': MAX_MARGIN_MULTIPLIER,
     'min_protection_distance_pct': MIN_PROTECTION_DISTANCE_PCT,
+    'asset_class': ASSET_CLASS,
+    'stock_only_mode': STOCK_ONLY_MODE,
+    'allow_short_selling': ALLOW_SHORT_SELLING,
+    'allow_fractional_shares': ALLOW_FRACTIONAL_SHARES,
+    'max_single_stock_pct': MAX_SINGLE_STOCK_PCT,
+    'max_sector_exposure_pct': MAX_SECTOR_EXPOSURE_PCT,
+    'min_equity_for_live_stock': MIN_EQUITY_FOR_LIVE_STOCK,
     'max_daily_loss_pct': MAX_DAILY_LOSS_PCT,
     'max_weekly_loss_pct': MAX_WEEKLY_LOSS_PCT,
     'max_consecutive_losses': MAX_CONSECUTIVE_LOSSES,
