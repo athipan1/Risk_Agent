@@ -37,6 +37,31 @@ MAX_SINGLE_STOCK_PCT = _env_float('MAX_SINGLE_STOCK_PCT', 0.10)
 MAX_SECTOR_EXPOSURE_PCT = _env_float('MAX_SECTOR_EXPOSURE_PCT', 0.25)
 MIN_EQUITY_FOR_LIVE_STOCK = _env_float('MIN_EQUITY_FOR_LIVE_STOCK', 1000.0)
 
+# Strategy bucket controls for the core-satellite portfolio.
+# Defaults match the requested allocation style:
+# core_dividend=50%, value_rebound=30%, news_momentum=20%.
+MAX_CORE_DIVIDEND_BUCKET_PCT = _env_float('MAX_CORE_DIVIDEND_BUCKET_PCT', 0.50)
+MAX_VALUE_REBOUND_BUCKET_PCT = _env_float('MAX_VALUE_REBOUND_BUCKET_PCT', 0.30)
+MAX_NEWS_MOMENTUM_BUCKET_PCT = _env_float('MAX_NEWS_MOMENTUM_BUCKET_PCT', 0.20)
+MAX_CORE_DIVIDEND_SYMBOL_PCT = _env_float('MAX_CORE_DIVIDEND_SYMBOL_PCT', 0.10)
+MAX_VALUE_REBOUND_SYMBOL_PCT = _env_float('MAX_VALUE_REBOUND_SYMBOL_PCT', 0.07)
+MAX_NEWS_MOMENTUM_SYMBOL_PCT = _env_float('MAX_NEWS_MOMENTUM_SYMBOL_PCT', 0.03)
+
+STRATEGY_BUCKET_LIMITS = {
+    'core_dividend': {
+        'max_bucket_pct': MAX_CORE_DIVIDEND_BUCKET_PCT,
+        'max_symbol_pct': MAX_CORE_DIVIDEND_SYMBOL_PCT,
+    },
+    'value_rebound': {
+        'max_bucket_pct': MAX_VALUE_REBOUND_BUCKET_PCT,
+        'max_symbol_pct': MAX_VALUE_REBOUND_SYMBOL_PCT,
+    },
+    'news_momentum': {
+        'max_bucket_pct': MAX_NEWS_MOMENTUM_BUCKET_PCT,
+        'max_symbol_pct': MAX_NEWS_MOMENTUM_SYMBOL_PCT,
+    },
+}
+
 # Session / circuit-breaker controls. Defaults are intentionally conservative
 # enough for early tiny-live workflows while remaining paper-trading friendly.
 MAX_DAILY_LOSS_PCT = _env_float('MAX_DAILY_LOSS_PCT', 0.005)
@@ -61,6 +86,7 @@ POLICY = {
     'max_single_stock_pct': MAX_SINGLE_STOCK_PCT,
     'max_sector_exposure_pct': MAX_SECTOR_EXPOSURE_PCT,
     'min_equity_for_live_stock': MIN_EQUITY_FOR_LIVE_STOCK,
+    'strategy_bucket_limits': STRATEGY_BUCKET_LIMITS,
     'max_daily_loss_pct': MAX_DAILY_LOSS_PCT,
     'max_weekly_loss_pct': MAX_WEEKLY_LOSS_PCT,
     'max_consecutive_losses': MAX_CONSECUTIVE_LOSSES,
