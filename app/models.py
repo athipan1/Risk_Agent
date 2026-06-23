@@ -6,6 +6,7 @@ from pydantic import BaseModel, Field
 TradeSide = Literal['buy', 'sell', 'hold']
 TradingMode = Literal['PAPER', 'LIVE']
 AssetClass = Literal['stock', 'xauusd', 'crypto', 'multi']
+StrategyBucket = Literal['core_dividend', 'value_rebound', 'news_momentum', 'unassigned']
 
 
 class PositionSizeRequest(BaseModel):
@@ -30,6 +31,10 @@ class RiskCheckRequest(PositionSizeRequest):
     sector: str | None = None
     owned_quantity: float = Field(ge=0, default=0)
     current_sector_exposure: float = Field(ge=0, default=0)
+
+    # Core-satellite strategy bucket context supplied by Manager/Database.
+    strategy_bucket: StrategyBucket = 'unassigned'
+    current_bucket_exposure: float = Field(ge=0, default=0)
 
     # Session/circuit-breaker context supplied by Manager/Database.
     daily_realized_pnl: float = 0.0
