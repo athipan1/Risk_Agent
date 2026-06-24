@@ -7,7 +7,7 @@ def _position(symbol, bucket, price=100, qty=10, allocation_pct=50.0):
         symbol=symbol,
         side='buy',
         entry_price=price,
-        protection_price=95,
+        protection_price=round(price * 0.95, 2),
         requested_quantity=qty,
         strategy_bucket=bucket,
         portfolio_context={
