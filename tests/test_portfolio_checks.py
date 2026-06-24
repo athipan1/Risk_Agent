@@ -55,8 +55,12 @@ def test_portfolio_check_rejects_when_later_position_exceeds_bucket_exposure():
         account_id=1,
         equity=100000,
         positions=[
-            _position('COREA', 'core_dividend', price=100, qty=400, allocation_pct=50.0),
-            _position('COREB', 'core_dividend', price=100, qty=200, allocation_pct=50.0),
+            _position('KO', 'core_dividend', price=100, qty=100, allocation_pct=50.0),
+            _position('JNJ', 'core_dividend', price=100, qty=100, allocation_pct=50.0),
+            _position('PEP', 'core_dividend', price=100, qty=100, allocation_pct=50.0),
+            _position('PG', 'core_dividend', price=100, qty=100, allocation_pct=50.0),
+            _position('CL', 'core_dividend', price=100, qty=100, allocation_pct=50.0),
+            _position('KMB', 'core_dividend', price=100, qty=100, allocation_pct=50.0),
         ],
         trading_mode='PAPER',
         asset_class='stock',
@@ -69,8 +73,9 @@ def test_portfolio_check_rejects_when_later_position_exceeds_bucket_exposure():
     response = check_portfolio(payload)
 
     assert response.status == 'partial'
-    assert response.data['approved_positions'] == 1
+    assert response.data['approved_positions'] == 5
     assert response.data['rejected_positions'] == 1
-    rejected = response.data['risk_approvals'][1]
+    rejected = response.data['risk_approvals'][-1]
+    assert rejected['symbol'] == 'KMB'
     assert rejected['approved'] is False
     assert 'bucket_exposure_limit_exceeded' in rejected['violations']
