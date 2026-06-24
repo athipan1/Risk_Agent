@@ -1,10 +1,25 @@
 from __future__ import annotations
 
+import math
 from collections import defaultdict
 from typing import Any
 
 from app.checks import check_order
 from app.models import PortfolioRiskCheckRequest, PortfolioRiskPosition, RiskCheckRequest, StandardResponse
+from app.policy import (
+    ALLOW_FRACTIONAL_SHARES,
+    MAX_POSITION_PCT,
+    MAX_SECTOR_EXPOSURE_PCT,
+    MAX_TOTAL_EXPOSURE_PCT,
+    STRATEGY_BUCKET_LIMITS,
+)
+
+BUCKET_PRIORITY = {
+    'core_dividend': 0,
+    'value_rebound': 1,
+    'news_momentum': 2,
+    'unassigned': 99,
+}
 
 
 def _context_float(context: dict[str, Any], key: str, default: float = 0.0) -> float:
@@ -36,6 +51,119 @@ def _target_weight(position: PortfolioRiskPosition) -> float | None:
         return float(value)
     except (TypeError, ValueError):
         return None
+
+
+def _max_bucket_pct(bucket: str) -> float | None:
+    limits = STRATEGY_BUCKET_LIMITS.get(bucket)
+    if not limits:
+        return None
+    return float(limits['max_bucket_pct'])
+
+
+def _max_bucket_symbol_pct(bucket: str) -> float | None:
+    limits = STRATEGY_BUCKET_LIMITS.get(bucket)
+    if not limits:
+        return None
+    return float(limits['max_symbol_pct'])
+
+
+def _quantity_for_value(value: float, price: float) -> float:
+    if price <= 0 or value <= 0:
+        return 0.0
+    quantity = value / price
+    return quantity if ALLOW_FRACTIONAL_SHARES else float(math.floor(quantity))
+
+
+def _scale_position_to_limits(
+    *,
+    payload: PortfolioRiskCheckRequest,
+    position: PortfolioRiskPosition,
+    projected_total: float,
+    bucket_exposure: float,
+) -> tuple[PortfolioRiskPosition | None, list[str], list[str], dict[str, Any]]:
+    symbol = str(position.symbol).upper()
+    bucket = _bucket_from_position(position)
+    sector = _sector_from_position(position)
+    warnings: list[str] = []
+    violations: list[str] = []
+
+    if bucket not in STRATEGY_BUCKET_LIMITS:
+        return None, ['strategy_bucket_unassigned'], warnings, {
+            'symbol': symbol,
+            'strategy_bucket': bucket,
+            'requested_quantity': position.requested_quantity,
+            'requested_value': round(position.entry_price * position.requested_quantity, 2),
+            'max_allowed_value': 0.0,
+            'scaling_reason': 'strategy_bucket_unassigned',
+        }
+
+    requested_value = position.entry_price * position.requested_quantity
+    current_symbol_exposure = float(payload.current_symbol_exposures.get(symbol, 0.0))
+    current_sector_exposure = float(payload.current_sector_exposures.get(sector or '', 0.0))
+
+    max_total_value = payload.equity * MAX_TOTAL_EXPOSURE_PCT
+    max_global_symbol_value = payload.equity * MAX_POSITION_PCT
+    max_bucket_value = payload.equity * (_max_bucket_pct(bucket) or 0.0)
+    max_bucket_symbol_value = payload.equity * (_max_bucket_symbol_pct(bucket) or 0.0)
+    max_symbol_value = min(max_global_symbol_value, max_bucket_symbol_value)
+    max_sector_value = payload.equity * MAX_SECTOR_EXPOSURE_PCT
+
+    allowed_by_total = max_total_value - payload.open_orders_exposure - projected_total
+    allowed_by_symbol = max_symbol_value - current_symbol_exposure
+    allowed_by_bucket = max_bucket_value - bucket_exposure
+    allowed_by_sector = max_sector_value - current_sector_exposure if sector else requested_value
+
+    limits = {
+        'portfolio_exposure_limit': allowed_by_total,
+        'single_stock_exposure_limit': allowed_by_symbol,
+        'bucket_exposure_limit': allowed_by_bucket,
+        'sector_exposure_limit': allowed_by_sector,
+    }
+    max_allowed_value = min(limits.values())
+
+    if max_allowed_value <= 0:
+        for name, allowed in limits.items():
+            if allowed <= 0:
+                violations.append(f'{name}_exceeded')
+        return None, violations, warnings, {
+            'symbol': symbol,
+            'strategy_bucket': bucket,
+            'requested_quantity': position.requested_quantity,
+            'requested_value': round(requested_value, 2),
+            'max_allowed_value': round(max(0.0, max_allowed_value), 2),
+            'limits': {name: round(value, 2) for name, value in limits.items()},
+        }
+
+    final_quantity = position.requested_quantity
+    if requested_value > max_allowed_value:
+        final_quantity = _quantity_for_value(max_allowed_value, position.entry_price)
+        warnings.append('portfolio_quantity_scaled_to_available_risk_budget')
+        for name, allowed in limits.items():
+            if requested_value > allowed:
+                warnings.append(f'scaled_by_{name}')
+
+    if final_quantity <= 0:
+        violations.append('scaled_quantity_below_minimum')
+        return None, violations, warnings, {
+            'symbol': symbol,
+            'strategy_bucket': bucket,
+            'requested_quantity': position.requested_quantity,
+            'requested_value': round(requested_value, 2),
+            'max_allowed_value': round(max_allowed_value, 2),
+            'limits': {name: round(value, 2) for name, value in limits.items()},
+        }
+
+    scaled_position = position.model_copy(update={'requested_quantity': final_quantity})
+    return scaled_position, violations, warnings, {
+        'symbol': symbol,
+        'strategy_bucket': bucket,
+        'requested_quantity': position.requested_quantity,
+        'scaled_quantity': final_quantity,
+        'requested_value': round(requested_value, 2),
+        'scaled_value': round(position.entry_price * final_quantity, 2),
+        'max_allowed_value': round(max_allowed_value, 2),
+        'limits': {name: round(value, 2) for name, value in limits.items()},
+    }
 
 
 def _build_risk_request(
@@ -80,20 +208,69 @@ def _build_risk_request(
     )
 
 
+def _rejected_decision(
+    *,
+    position: PortfolioRiskPosition,
+    violations: list[str],
+    warnings: list[str],
+    scaling: dict[str, Any],
+) -> dict[str, Any]:
+    symbol = str(position.symbol).upper()
+    bucket = _bucket_from_position(position)
+    requested_value = position.entry_price * position.requested_quantity
+    return {
+        'symbol': symbol,
+        'approved': False,
+        'status': 'rejected',
+        'strategy_bucket': bucket,
+        'target_weight': _target_weight(position),
+        'allocation_pct': position.portfolio_context.get('allocation_pct'),
+        'target_value': position.portfolio_context.get('target_value'),
+        'requested_quantity': position.requested_quantity,
+        'final_quantity': 0.0,
+        'requested_value': round(requested_value, 2),
+        'approved_value': 0.0,
+        'risk_response': {'approved': False, 'violations': violations, 'warnings': warnings, 'scaling': scaling},
+        'violations': violations,
+        'warnings': warnings,
+        'scaling': scaling,
+    }
+
+
 def check_portfolio(payload: PortfolioRiskCheckRequest) -> StandardResponse:
     decisions: list[dict[str, Any]] = []
     projected_total = float(payload.current_total_exposure)
     bucket_exposures = defaultdict(float)
+    sector_exposures = defaultdict(float)
     for bucket, value in payload.current_bucket_exposures.items():
         bucket_exposures[str(bucket)] = float(value or 0.0)
+    for sector, value in payload.current_sector_exposures.items():
+        sector_exposures[str(sector)] = float(value or 0.0)
 
-    for position in payload.positions:
+    ordered_positions = sorted(
+        list(payload.positions),
+        key=lambda pos: (BUCKET_PRIORITY.get(_bucket_from_position(pos), 99), -float((pos.score_breakdown or {}).get('final_opportunity_score') or 0.0)),
+    )
+
+    for position in ordered_positions:
         symbol = str(position.symbol).upper()
         bucket = _bucket_from_position(position)
+        sector = _sector_from_position(position)
+
+        scaled_position, pre_violations, pre_warnings, scaling = _scale_position_to_limits(
+            payload=payload,
+            position=position,
+            projected_total=projected_total,
+            bucket_exposure=bucket_exposures[bucket],
+        )
+        if scaled_position is None:
+            decisions.append(_rejected_decision(position=position, violations=pre_violations, warnings=pre_warnings, scaling=scaling))
+            continue
+
         position_value = position.entry_price * position.requested_quantity
         risk_payload = _build_risk_request(
             payload=payload,
-            position=position,
+            position=scaled_position,
             current_total_exposure=projected_total,
             bucket_exposure=bucket_exposures[bucket],
         )
@@ -102,10 +279,14 @@ def check_portfolio(payload: PortfolioRiskCheckRequest) -> StandardResponse:
         approved = bool(data.get('approved'))
         final_quantity = float(data.get('final_quantity') or 0.0)
         approved_value = position.entry_price * final_quantity
+        warnings = list(dict.fromkeys(pre_warnings + (data.get('warnings', []) or [])))
+        violations = data.get('violations', []) or []
 
         if approved:
             projected_total += approved_value
             bucket_exposures[bucket] += approved_value
+            if sector:
+                sector_exposures[sector] += approved_value
 
         decisions.append(
             {
@@ -120,9 +301,10 @@ def check_portfolio(payload: PortfolioRiskCheckRequest) -> StandardResponse:
                 'final_quantity': final_quantity,
                 'requested_value': round(position_value, 2),
                 'approved_value': round(approved_value, 2),
-                'risk_response': data,
-                'violations': data.get('violations', []),
-                'warnings': data.get('warnings', []),
+                'risk_response': {**data, 'warnings': warnings, 'scaling': scaling},
+                'violations': violations,
+                'warnings': warnings,
+                'scaling': scaling,
             }
         )
 
@@ -138,6 +320,7 @@ def check_portfolio(payload: PortfolioRiskCheckRequest) -> StandardResponse:
             'rejected_positions': rejected_count,
             'projected_total_exposure': round(projected_total, 2),
             'projected_bucket_exposures': {bucket: round(value, 2) for bucket, value in bucket_exposures.items()},
+            'projected_sector_exposures': {sector: round(value, 2) for sector, value in sector_exposures.items()},
             'risk_approvals': decisions,
         },
         error=None if rejected_count == 0 else 'portfolio_risk_check_failed',
