@@ -57,6 +57,15 @@ def _dedupe(values: list[str]) -> list[str]:
     return list(dict.fromkeys(values))
 
 
+def _allocation_aware(payload: RiskCheckRequest) -> bool:
+    return (
+        payload.strategy_bucket != 'unassigned'
+        or payload.target_weight is not None
+        or payload.allocation_pct is not None
+        or payload.target_value is not None
+    )
+
+
 def _cap_clipped_response(
     *,
     payload: RiskCheckRequest,
@@ -70,7 +79,7 @@ def _cap_clipped_response(
     projected_total: float,
     sizing_approved_quantity: float,
 ) -> StandardResponse | None:
-    if payload.side != 'buy' or not can_clip_violations(violations):
+    if payload.side != 'buy' or not _allocation_aware(payload) or not can_clip_violations(violations):
         return None
 
     max_allowed_value, cap_limits = cap_aware_max_buy_value(payload)
