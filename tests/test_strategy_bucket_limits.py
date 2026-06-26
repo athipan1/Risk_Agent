@@ -74,3 +74,42 @@ def test_unassigned_bucket_keeps_global_stock_limit_only():
     assert 'bucket_exposure_limit_exceeded' not in violations
     assert metrics['bucket_max_symbol_exposure'] is None
     assert metrics['max_bucket_exposure'] is None
+
+
+def test_rebalance_target_does_not_double_count_existing_symbol_exposure():
+    payload = _payload(
+        symbol='ADBE',
+        strategy_bucket='core_dividend',
+        requested_quantity=100.0,
+        current_symbol_exposure=9500.0,
+        current_bucket_exposure=30000.0,
+        target_value=10000.0,
+    )
+
+    violations, warnings, metrics = check_stock_limits(payload)
+
+    assert 'single_stock_exposure_limit_exceeded' not in violations
+    assert 'bucket_symbol_exposure_limit_exceeded' not in violations
+    assert metrics['rebalance_aware'] is True
+    assert metrics['requested_position_value'] == 10000.0
+    assert metrics['effective_position_value'] == 500.0
+    assert metrics['projected_symbol_exposure'] == 10000.0
+    assert metrics['projected_bucket_exposure'] == 30500.0
+
+
+def test_rebalance_target_still_rejects_target_above_symbol_limit():
+    payload = _payload(
+        symbol='ACGL',
+        strategy_bucket='value_rebound',
+        requested_quantity=340.0,
+        current_symbol_exposure=0.0,
+        target_value=34000.0,
+    )
+
+    violations, warnings, metrics = check_stock_limits(payload)
+
+    assert 'single_stock_exposure_limit_exceeded' in violations
+    assert 'bucket_symbol_exposure_limit_exceeded' in violations
+    assert metrics['rebalance_aware'] is True
+    assert metrics['effective_position_value'] == 34000.0
+    assert metrics['projected_symbol_exposure'] == 34000.0
