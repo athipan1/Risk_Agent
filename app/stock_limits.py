@@ -39,13 +39,31 @@ def _strategy_bucket_limits(strategy_bucket: str) -> dict | None:
     return STRATEGY_BUCKET_LIMITS.get(bucket)
 
 
+def _rebalance_position_value(payload: RiskCheckRequest, requested_position_value: float) -> tuple[float, float, bool]:
+    """Return incremental buy value and projected symbol exposure.
+
+    Portfolio allocation flows may send a full target value/quantity rather than a
+    pure buy delta. For existing positions, adding that full target to current
+    exposure double-counts exposure and causes false rejections. When target_value
+    is present, treat the order as rebalance-aware and only count the positive
+    delta above current symbol exposure.
+    """
+    if payload.side != 'buy' or payload.target_value is None:
+        return requested_position_value, payload.current_symbol_exposure + requested_position_value, False
+
+    target_value = float(payload.target_value or 0)
+    incremental_value = max(0.0, target_value - payload.current_symbol_exposure)
+    projected_symbol_exposure = max(payload.current_symbol_exposure, target_value)
+    return incremental_value, projected_symbol_exposure, True
+
+
 def check_stock_limits(payload: RiskCheckRequest) -> Tuple[list[str], list[str], dict]:
     violations: list[str] = []
     warnings: list[str] = []
-    position_value = payload.entry_price * payload.requested_quantity
-    projected_symbol_exposure = payload.current_symbol_exposure + position_value
-    projected_sector_exposure = payload.current_sector_exposure + position_value
-    projected_bucket_exposure = payload.current_bucket_exposure + position_value
+    requested_position_value = payload.entry_price * payload.requested_quantity
+    effective_position_value, projected_symbol_exposure, rebalance_aware = _rebalance_position_value(payload, requested_position_value)
+    projected_sector_exposure = payload.current_sector_exposure + effective_position_value
+    projected_bucket_exposure = payload.current_bucket_exposure + effective_position_value
     max_single_stock_value = payload.equity * MAX_SINGLE_STOCK_PCT
     max_sector_value = payload.equity * MAX_SECTOR_EXPOSURE_PCT
 
@@ -105,6 +123,10 @@ def check_stock_limits(payload: RiskCheckRequest) -> Tuple[list[str], list[str],
         'owned_quantity': payload.owned_quantity,
         'sector': payload.sector,
         'strategy_bucket': payload.strategy_bucket,
+        'rebalance_aware': rebalance_aware,
+        'target_value': round(float(payload.target_value), 2) if payload.target_value is not None else None,
+        'requested_position_value': round(requested_position_value, 2),
+        'effective_position_value': round(effective_position_value, 2),
         'current_bucket_exposure': round(payload.current_bucket_exposure, 2),
         'projected_bucket_exposure': round(projected_bucket_exposure, 2),
         'max_bucket_exposure': round(bucket_max_exposure_value, 2) if bucket_max_exposure_value is not None else None,
@@ -112,6 +134,7 @@ def check_stock_limits(payload: RiskCheckRequest) -> Tuple[list[str], list[str],
         'current_sector_exposure': round(payload.current_sector_exposure, 2),
         'projected_sector_exposure': round(projected_sector_exposure, 2),
         'max_sector_exposure': round(max_sector_value, 2),
+        'current_symbol_exposure': round(payload.current_symbol_exposure, 2),
         'projected_symbol_exposure': round(projected_symbol_exposure, 2),
         'max_single_stock_exposure': round(max_single_stock_value, 2),
         'min_equity_for_live_stock': MIN_EQUITY_FOR_LIVE_STOCK,
