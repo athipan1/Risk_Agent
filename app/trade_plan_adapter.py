@@ -5,9 +5,40 @@ from typing import Any
 from app.checks import check_order
 from app.models import RiskCheckRequest, StandardResponse, TradePlanRiskCheckRequest
 
+SESSION_CONTEXT_FIELDS = {
+    'daily_realized_pnl',
+    'weekly_realized_pnl',
+    'consecutive_losses',
+    'trades_today',
+    'symbol_trades_today',
+    'minutes_since_last_loss',
+    'minutes_since_last_symbol_trade',
+    'emergency_halt',
+}
+
 
 def _session_value(context: dict[str, Any], key: str, default: Any) -> Any:
-    return context.get(key, default)
+    return context[key] if key in context else default
+
+
+def _mark_live_session_fields_as_unset_if_missing(
+    *,
+    risk_payload: RiskCheckRequest,
+    session_context: dict[str, Any],
+) -> None:
+    """Preserve existing LIVE behavior when TradePlan session context is missing.
+
+    RiskCheckRequest normally cannot tell whether default-valued session fields
+    came from Manager or from Pydantic defaults. Existing LIVE checks rely on
+    `model_fields_set`, so remove session fields that were not present in the
+    TradePlan request context.
+    """
+    provided = getattr(risk_payload, 'model_fields_set', None)
+    if not isinstance(provided, set):
+        return
+    for field_name in SESSION_CONTEXT_FIELDS:
+        if field_name not in session_context:
+            provided.discard(field_name)
 
 
 def trade_plan_to_risk_check(payload: TradePlanRiskCheckRequest) -> RiskCheckRequest:
@@ -26,7 +57,7 @@ def trade_plan_to_risk_check(payload: TradePlanRiskCheckRequest) -> RiskCheckReq
     quantity = plan.final_quantity or plan.quantity
     session = payload.session_risk_context or {}
 
-    return RiskCheckRequest(
+    risk_payload = RiskCheckRequest(
         account_id=int(plan.account_id),
         symbol=plan.symbol.upper(),
         side=plan.side,
@@ -57,6 +88,12 @@ def trade_plan_to_risk_check(payload: TradePlanRiskCheckRequest) -> RiskCheckReq
         minutes_since_last_symbol_trade=session.get('minutes_since_last_symbol_trade'),
         emergency_halt=_session_value(session, 'emergency_halt', False),
     )
+    if payload.trading_mode == 'LIVE':
+        _mark_live_session_fields_as_unset_if_missing(
+            risk_payload=risk_payload,
+            session_context=session,
+        )
+    return risk_payload
 
 
 def check_trade_plan(payload: TradePlanRiskCheckRequest) -> StandardResponse:
