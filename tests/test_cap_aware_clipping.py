@@ -61,10 +61,13 @@ def test_check_order_does_not_clip_when_no_risk_budget_remains():
     assert 'single_stock_exposure_limit_exceeded' in response.data['violations']
 
 
-def test_check_order_does_not_clip_session_or_operational_violations():
+def test_check_order_kill_switch_rejects_before_cap_clipping():
     response = check_order(_payload(emergency_halt=True))
 
     assert response.status == 'rejected'
+    assert response.error == 'risk_kill_switch_active'
     assert response.data['approved'] is False
+    assert response.data['kill_switch_active'] is True
+    assert response.data['final_quantity'] == 0.0
     assert 'emergency_halt_active' in response.data['violations']
-    assert 'bucket_symbol_exposure_limit_exceeded' in response.data['violations']
+    assert response.data.get('guard_plan') is None
