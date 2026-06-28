@@ -1,4 +1,5 @@
 from app.clipping import can_clip_violations, cap_aware_max_buy_value, quantity_for_value
+from app.kill_switch import kill_switch_from_risk_payload, rejected_kill_switch_payload
 from app.models import RiskCheckRequest, StandardResponse
 from app.policy import MAX_MARGIN_MULTIPLIER, MAX_POSITION_PCT, MAX_TOTAL_EXPOSURE_PCT
 from app.session_limits import check_session_limits
@@ -120,6 +121,7 @@ def _cap_clipped_response(
             'protection_required': True,
             'guard_plan': build_guard_plan(payload, clipped_quantity),
             'session_risk': session_metrics,
+            'kill_switch_active': False,
             'stock_risk': {**stock_metrics, 'cap_clip_limits': cap_limits},
             'cap_clipped': True,
             'original_violations': violations,
@@ -135,7 +137,7 @@ def check_order(payload: RiskCheckRequest) -> StandardResponse:
     warnings = []
 
     if payload.side == 'hold':
-        return StandardResponse(status='approved', data={'approved': True, 'approved_quantity': 0.0, 'guard_plan': None, 'violations': [], 'warnings': []})
+        return StandardResponse(status='approved', data={'approved': True, 'approved_quantity': 0.0, 'guard_plan': None, 'violations': [], 'warnings': [], 'kill_switch_active': False})
 
     if payload.trading_mode == 'LIVE':
         missing_context = missing_live_context_fields(payload)
@@ -143,7 +145,20 @@ def check_order(payload: RiskCheckRequest) -> StandardResponse:
             violations.append('live_context_required')
             return _rejected_response(payload, violations, warnings, {'missing_context_fields': missing_context})
 
-    session_violations, session_warnings, session_metrics = check_session_limits(payload)
+    kill_switch_active, session_violations, session_warnings, session_metrics = kill_switch_from_risk_payload(payload)
+    if kill_switch_active:
+        return StandardResponse(
+            status='rejected',
+            data=rejected_kill_switch_payload(
+                trading_mode=payload.trading_mode,
+                asset_class=payload.asset_class,
+                violations=session_violations,
+                warnings=session_warnings,
+                metrics=session_metrics,
+            ),
+            error='risk_kill_switch_active',
+        )
+
     stock_violations, stock_warnings, stock_metrics = check_stock_limits(payload)
     violations.extend(session_violations)
     violations.extend(stock_violations)
@@ -214,6 +229,7 @@ def check_order(payload: RiskCheckRequest) -> StandardResponse:
             'protection_required': True,
             'guard_plan': guard_plan,
             'session_risk': session_metrics,
+            'kill_switch_active': False,
             'stock_risk': stock_metrics,
             'violations': violations,
             'warnings': warnings
