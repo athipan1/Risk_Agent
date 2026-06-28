@@ -5,6 +5,7 @@ from collections import defaultdict
 from typing import Any
 
 from app.checks import check_order
+from app.kill_switch import rejected_kill_switch_payload
 from app.models import PortfolioRiskCheckRequest, PortfolioRiskPosition, RiskCheckRequest, StandardResponse
 from app.policy import (
     ALLOW_FRACTIONAL_SHARES,
@@ -208,6 +209,18 @@ def _build_risk_request(
     )
 
 
+def _portfolio_kill_switch_payload(payload: PortfolioRiskCheckRequest) -> RiskCheckRequest | None:
+    if not payload.positions:
+        return None
+    first_position = payload.positions[0]
+    return _build_risk_request(
+        payload=payload,
+        position=first_position,
+        current_total_exposure=float(payload.current_total_exposure),
+        bucket_exposure=float(payload.current_bucket_exposures.get(_bucket_from_position(first_position), 0.0)),
+    )
+
+
 def _rejected_decision(
     *,
     position: PortfolioRiskPosition,
@@ -238,6 +251,44 @@ def _rejected_decision(
 
 
 def check_portfolio(payload: PortfolioRiskCheckRequest) -> StandardResponse:
+    kill_switch_payload = _portfolio_kill_switch_payload(payload)
+    if kill_switch_payload is not None:
+        kill_response = check_order(kill_switch_payload)
+        kill_data = kill_response.data or {}
+        if kill_data.get('kill_switch_active'):
+            violations = kill_data.get('violations') or []
+            warnings = kill_data.get('warnings') or []
+            session_risk = kill_data.get('session_risk') or {}
+            return StandardResponse(
+                status='rejected',
+                data={
+                    **rejected_kill_switch_payload(
+                        trading_mode=payload.trading_mode,
+                        asset_class=payload.asset_class,
+                        violations=violations,
+                        warnings=warnings,
+                        metrics=session_risk,
+                        extra={'mode': 'portfolio_allocation'},
+                    ),
+                    'total_positions': len(payload.positions),
+                    'approved_positions': 0,
+                    'rejected_positions': len(payload.positions),
+                    'projected_total_exposure': round(float(payload.current_total_exposure), 2),
+                    'projected_bucket_exposures': {},
+                    'projected_sector_exposures': {},
+                    'risk_approvals': [
+                        _rejected_decision(
+                            position=position,
+                            violations=violations,
+                            warnings=warnings,
+                            scaling={'reason': 'portfolio_kill_switch_active'},
+                        )
+                        for position in payload.positions
+                    ],
+                },
+                error='risk_kill_switch_active',
+            )
+
     decisions: list[dict[str, Any]] = []
     projected_total = float(payload.current_total_exposure)
     bucket_exposures = defaultdict(float)
@@ -322,6 +373,7 @@ def check_portfolio(payload: PortfolioRiskCheckRequest) -> StandardResponse:
             'projected_bucket_exposures': {bucket: round(value, 2) for bucket, value in bucket_exposures.items()},
             'projected_sector_exposures': {sector: round(value, 2) for sector, value in sector_exposures.items()},
             'risk_approvals': decisions,
+            'kill_switch_active': False,
         },
         error=None if rejected_count == 0 else 'portfolio_risk_check_failed',
     )
