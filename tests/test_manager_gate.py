@@ -43,8 +43,9 @@ def test_manager_gate_approves_valid_candidate():
     assert response.status_code == 200
     assert body['status'] == 'approved'
     assert body['data']['approved'] is True
-    assert body['data']['max_position_pct'] == 0.08
-    assert body['data']['max_position_value'] == 8000
+    assert body['data']['effective_size_multiplier'] == 0.5
+    assert body['data']['max_position_pct'] == 0.05
+    assert body['data']['max_position_value'] == 5000
     assert body['data']['projected_exposure_pct'] == 0.35
     assert body['data']['violations'] == []
 
