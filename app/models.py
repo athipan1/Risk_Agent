@@ -56,6 +56,40 @@ class RiskCheckRequest(PositionSizeRequest):
     emergency_halt: bool = False
 
 
+class ManagerDecisionPayload(BaseModel):
+    decision: str
+    confidence: str | None = None
+    recommended_strategy: str | None = None
+    backtest_best_strategy: str | None = None
+    reason: str | None = None
+
+
+class ManagerMarketContext(BaseModel):
+    position_size_multiplier: float = Field(default=1.0, ge=0, le=1)
+    risk_budget_multiplier: float = Field(default=1.0, ge=0, le=1)
+    exposure_cap: float = Field(default=1.0, ge=0, le=1)
+    effective_size_multiplier: float | None = Field(default=None, ge=0, le=1)
+    allowed_strategies: list[str] = Field(default_factory=list)
+    blocked_strategies: list[str] = Field(default_factory=list)
+    decision_notes: list[str] = Field(default_factory=list)
+
+
+class ManagerAccountContext(BaseModel):
+    equity: float = Field(gt=0)
+    current_exposure_pct: float = Field(default=0, ge=0, le=1)
+    current_symbol_exposure_pct: float = Field(default=0, ge=0, le=1)
+    open_orders_exposure_pct: float = Field(default=0, ge=0, le=1)
+
+
+class ManagerGateRequest(BaseModel):
+    symbol: str = 'UNKNOWN'
+    decision: ManagerDecisionPayload
+    market_context: ManagerMarketContext = Field(default_factory=ManagerMarketContext)
+    account: ManagerAccountContext
+    requested_position_pct: float = Field(default=0.10, ge=0, le=1)
+    trading_mode: TradingMode = 'PAPER'
+
+
 class TradePlanRiskEnvelope(BaseModel):
     account_equity: float | None = Field(default=None, gt=0)
     cash_available: float | None = Field(default=None, ge=0)

@@ -1,7 +1,8 @@
 from fastapi import FastAPI
 
 from app.checks import check_order
-from app.models import PortfolioRiskCheckRequest, PositionSizeRequest, RiskCheckRequest, StandardResponse, TradePlanRiskCheckRequest
+from app.manager_gate import check_manager_gate
+from app.models import ManagerGateRequest, PortfolioRiskCheckRequest, PositionSizeRequest, RiskCheckRequest, StandardResponse, TradePlanRiskCheckRequest
 from app.policy import POLICY
 from app.portfolio_checks import check_portfolio
 from app.sizing import calculate_position_size
@@ -21,6 +22,7 @@ def health():
             'stock_risk_controls': True,
             'portfolio_allocation_controls': True,
             'trade_plan_controls': True,
+            'manager_decision_gate': True,
             'stock_only_mode': POLICY.get('stock_only_mode', True),
             'allow_short_selling': POLICY.get('allow_short_selling', False),
             'emergency_halt': POLICY.get('emergency_halt', False),
@@ -49,6 +51,7 @@ def risk_status():
             'ready_for_stock_live': not POLICY.get('emergency_halt', False) and POLICY.get('stock_only_mode', True),
             'ready_for_portfolio_allocation': True,
             'ready_for_trade_plan_check': True,
+            'ready_for_manager_decision_gate': True,
             'stock_only_mode': POLICY.get('stock_only_mode', True),
             'allow_short_selling': POLICY.get('allow_short_selling', False),
             'allow_fractional_shares': POLICY.get('allow_fractional_shares', False),
@@ -84,3 +87,8 @@ def trade_plan_risk_check(payload: TradePlanRiskCheckRequest):
 @app.post('/risk/portfolio-check', response_model=StandardResponse)
 def portfolio_risk_check(payload: PortfolioRiskCheckRequest):
     return check_portfolio(payload)
+
+
+@app.post('/risk/manager-gate', response_model=StandardResponse)
+def manager_decision_gate(payload: ManagerGateRequest):
+    return check_manager_gate(payload)
