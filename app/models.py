@@ -11,6 +11,8 @@ TradePlanStatus = Literal['draft', 'risk_pending', 'risk_approved', 'manual_appr
 TradePlanSource = Literal['single_analysis', 'multi_analysis', 'scanner', 'manual', 'replay']
 OrderType = Literal['market', 'limit']
 TimeInForce = Literal['GTC', 'IOC', 'FOK']
+PositionSide = Literal['long', 'short']
+ProfitActionName = Literal['hold', 'move_stop', 'partial_exit', 'exit_all']
 
 
 class PositionSizeRequest(BaseModel):
@@ -30,22 +32,18 @@ class RiskCheckRequest(PositionSizeRequest):
     margin_multiplier: float = Field(gt=0, default=1)
     trading_mode: TradingMode = 'PAPER'
 
-    # Stock-first context supplied by Manager/Database.
     asset_class: AssetClass = 'stock'
     sector: str | None = None
     owned_quantity: float = Field(ge=0, default=0)
     current_sector_exposure: float = Field(ge=0, default=0)
 
-    # Core-satellite strategy bucket context supplied by Manager/Database.
     strategy_bucket: StrategyBucket = 'unassigned'
     current_bucket_exposure: float = Field(ge=0, default=0)
 
-    # Manager portfolio-allocation context.
     target_weight: float | None = Field(default=None, ge=0)
     allocation_pct: float | None = Field(default=None, ge=0)
     target_value: float | None = Field(default=None, ge=0)
 
-    # Session/circuit-breaker context supplied by Manager/Database.
     daily_realized_pnl: float = 0.0
     weekly_realized_pnl: float = 0.0
     consecutive_losses: int = Field(ge=0, default=0)
@@ -200,6 +198,51 @@ class PortfolioRiskCheckRequest(BaseModel):
     current_symbol_exposures: dict[str, float] = Field(default_factory=dict)
     current_bucket_exposures: dict[str, float] = Field(default_factory=dict)
     current_sector_exposures: dict[str, float] = Field(default_factory=dict)
+
+
+class ProfitPositionPayload(BaseModel):
+    symbol: str
+    side: PositionSide = 'long'
+    quantity: float = Field(gt=0)
+    entry_price: float = Field(gt=0)
+    current_price: float = Field(gt=0)
+    stop_loss: float | None = Field(default=None, gt=0)
+    strategy_bucket: StrategyBucket = 'unassigned'
+
+
+class ProfitPlanAction(BaseModel):
+    action: ProfitActionName
+    symbol: str
+    quantity: float = Field(ge=0)
+    recommended_stop: float | None = Field(default=None, gt=0)
+    reason: str | None = None
+    confidence_score: float | None = Field(default=None, ge=0, le=1)
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class ProfitPlanPayload(BaseModel):
+    symbol: str
+    current_r_multiple: float | None = None
+    unrealized_pl_pct: float | None = None
+    primary_action: ProfitActionName
+    actions: list[ProfitPlanAction]
+    warnings: list[str] = Field(default_factory=list)
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class ProfitPlanGateRequest(BaseModel):
+    position: ProfitPositionPayload
+    profit_plan: ProfitPlanPayload
+    trading_mode: TradingMode = 'PAPER'
+    max_partial_exit_pct: float = Field(default=0.50, gt=0, le=1)
+    min_partial_exit_r: float = Field(default=1.0, ge=0)
+    require_manual_exit_all: bool = True
+
+    @model_validator(mode='after')
+    def validate_symbol_consistency(self):
+        if self.position.symbol.upper() != self.profit_plan.symbol.upper():
+            raise ValueError('position symbol and profit plan symbol must match')
+        return self
 
 
 class StandardResponse(BaseModel):
