@@ -68,7 +68,7 @@ STRATEGY_BUCKET_LIMITS = {
 }
 
 # Session / circuit-breaker controls. Defaults are intentionally conservative
-enough for early tiny-live workflows while remaining paper-trading friendly.
+# enough for early tiny-live workflows while remaining paper-trading friendly.
 MAX_DAILY_LOSS_PCT = _env_float('MAX_DAILY_LOSS_PCT', 0.005)
 MAX_WEEKLY_LOSS_PCT = _env_float('MAX_WEEKLY_LOSS_PCT', 0.015)
 MAX_CONSECUTIVE_LOSSES = _env_int('MAX_CONSECUTIVE_LOSSES', 3)
