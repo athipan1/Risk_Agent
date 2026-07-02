@@ -29,6 +29,32 @@ def test_core_dividend_allows_up_to_ten_percent_per_symbol():
     assert metrics['max_bucket_exposure'] == 50000.0
 
 
+def test_quality_growth_allows_up_to_ten_percent_per_symbol():
+    payload = _payload(symbol='BKNG', strategy_bucket='quality_growth', requested_quantity=100.0)
+
+    violations, warnings, metrics = check_stock_limits(payload)
+
+    assert 'bucket_symbol_exposure_limit_exceeded' not in violations
+    assert metrics['strategy_bucket'] == 'quality_growth'
+    assert metrics['bucket_max_symbol_exposure'] == 10000.0
+    assert metrics['max_bucket_exposure'] == 20000.0
+
+
+def test_quality_growth_rejects_projected_bucket_above_twenty_percent():
+    payload = _payload(
+        symbol='BKNG',
+        strategy_bucket='quality_growth',
+        requested_quantity=20.0,
+        current_bucket_exposure=19000.0,
+    )
+
+    violations, warnings, metrics = check_stock_limits(payload)
+
+    assert 'bucket_exposure_limit_exceeded' in violations
+    assert metrics['projected_bucket_exposure'] == 21000.0
+    assert metrics['max_bucket_exposure'] == 20000.0
+
+
 def test_value_rebound_rejects_above_seven_percent_symbol_weight():
     payload = _payload(strategy_bucket='value_rebound', requested_quantity=80.0)
 
