@@ -6,7 +6,7 @@ from pydantic import BaseModel, Field, model_validator
 TradeSide = Literal['buy', 'sell', 'hold']
 TradingMode = Literal['PAPER', 'LIVE']
 AssetClass = Literal['stock', 'xauusd', 'crypto', 'multi']
-StrategyBucket = Literal['core_dividend', 'value_rebound', 'news_momentum', 'unassigned']
+StrategyBucket = Literal['core_dividend', 'quality_growth', 'value_rebound', 'news_momentum', 'unassigned']
 TradePlanStatus = Literal['draft', 'risk_pending', 'risk_approved', 'manual_approval_required', 'execution_ready', 'rejected']
 TradePlanSource = Literal['single_analysis', 'multi_analysis', 'scanner', 'manual', 'replay']
 OrderType = Literal['market', 'limit']
@@ -218,36 +218,3 @@ class ProfitPlanAction(BaseModel):
     reason: str | None = None
     confidence_score: float | None = Field(default=None, ge=0, le=1)
     metadata: dict[str, Any] = Field(default_factory=dict)
-
-
-class ProfitPlanPayload(BaseModel):
-    symbol: str
-    current_r_multiple: float | None = None
-    unrealized_pl_pct: float | None = None
-    primary_action: ProfitActionName
-    actions: list[ProfitPlanAction]
-    warnings: list[str] = Field(default_factory=list)
-    metadata: dict[str, Any] = Field(default_factory=dict)
-
-
-class ProfitPlanGateRequest(BaseModel):
-    position: ProfitPositionPayload
-    profit_plan: ProfitPlanPayload
-    trading_mode: TradingMode = 'PAPER'
-    max_partial_exit_pct: float = Field(default=0.50, gt=0, le=1)
-    min_partial_exit_r: float = Field(default=1.0, ge=0)
-    require_manual_exit_all: bool = True
-
-    @model_validator(mode='after')
-    def validate_symbol_consistency(self):
-        if self.position.symbol.upper() != self.profit_plan.symbol.upper():
-            raise ValueError('position symbol and profit plan symbol must match')
-        return self
-
-
-class StandardResponse(BaseModel):
-    status: str
-    agent_type: str = 'risk'
-    version: str = '1.0.0'
-    data: dict | None = None
-    error: str | None = None
