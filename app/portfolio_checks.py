@@ -17,8 +17,9 @@ from app.policy import (
 
 BUCKET_PRIORITY = {
     'core_dividend': 0,
-    'value_rebound': 1,
-    'news_momentum': 2,
+    'quality_growth': 1,
+    'value_rebound': 2,
+    'news_momentum': 3,
     'unassigned': 99,
 }
 
@@ -193,7 +194,7 @@ def _build_risk_request(
         asset_class=payload.asset_class,
         sector=_sector_from_position(position),
         current_sector_exposure=float(payload.current_sector_exposures.get(_sector_from_position(position) or '', 0.0)),
-        strategy_bucket=bucket if bucket in {'core_dividend', 'value_rebound', 'news_momentum'} else 'unassigned',
+        strategy_bucket=bucket if bucket in STRATEGY_BUCKET_LIMITS else 'unassigned',
         current_bucket_exposure=bucket_exposure,
         target_weight=_target_weight(position),
         allocation_pct=position.portfolio_context.get('allocation_pct'),
@@ -258,122 +259,101 @@ def check_portfolio(payload: PortfolioRiskCheckRequest) -> StandardResponse:
         if kill_data.get('kill_switch_active'):
             violations = kill_data.get('violations') or []
             warnings = kill_data.get('warnings') or []
-            session_risk = kill_data.get('session_risk') or {}
             return StandardResponse(
-                status='rejected',
-                data={
-                    **rejected_kill_switch_payload(
-                        trading_mode=payload.trading_mode,
-                        asset_class=payload.asset_class,
-                        violations=violations,
-                        warnings=warnings,
-                        metrics=session_risk,
-                        extra={'mode': 'portfolio_allocation'},
-                    ),
-                    'total_positions': len(payload.positions),
-                    'approved_positions': 0,
-                    'rejected_positions': len(payload.positions),
-                    'projected_total_exposure': round(float(payload.current_total_exposure), 2),
-                    'projected_bucket_exposures': {},
-                    'projected_sector_exposures': {},
-                    'risk_approvals': [
-                        _rejected_decision(
-                            position=position,
-                            violations=violations,
-                            warnings=warnings,
-                            scaling={'reason': 'portfolio_kill_switch_active'},
-                        )
-                        for position in payload.positions
-                    ],
-                },
-                error='risk_kill_switch_active',
+                status='success',
+                data=rejected_kill_switch_payload(
+                    symbol='PORTFOLIO',
+                    violations=violations,
+                    warnings=warnings,
+                    source='portfolio_risk_check',
+                ),
+                confidence_score=0.99,
             )
 
-    decisions: list[dict[str, Any]] = []
+    approved: list[dict[str, Any]] = []
+    rejected: list[dict[str, Any]] = []
+    warnings: list[str] = []
+    total_requested_value = 0.0
+    total_approved_value = 0.0
     projected_total = float(payload.current_total_exposure)
-    bucket_exposures = defaultdict(float)
-    sector_exposures = defaultdict(float)
-    for bucket, value in payload.current_bucket_exposures.items():
-        bucket_exposures[str(bucket)] = float(value or 0.0)
-    for sector, value in payload.current_sector_exposures.items():
-        sector_exposures[str(sector)] = float(value or 0.0)
+    bucket_projected: dict[str, float] = defaultdict(float, {k: float(v) for k, v in payload.current_bucket_exposures.items()})
 
-    ordered_positions = sorted(
-        list(payload.positions),
-        key=lambda pos: (BUCKET_PRIORITY.get(_bucket_from_position(pos), 99), -float((pos.score_breakdown or {}).get('final_opportunity_score') or 0.0)),
-    )
-
-    for position in ordered_positions:
-        symbol = str(position.symbol).upper()
+    for position in sorted(payload.positions, key=lambda p: BUCKET_PRIORITY.get(_bucket_from_position(p), 99)):
         bucket = _bucket_from_position(position)
-        sector = _sector_from_position(position)
-
-        scaled_position, pre_violations, pre_warnings, scaling = _scale_position_to_limits(
+        requested_value = position.entry_price * position.requested_quantity
+        total_requested_value += requested_value
+        scaled, violations, scale_warnings, scaling = _scale_position_to_limits(
             payload=payload,
             position=position,
             projected_total=projected_total,
-            bucket_exposure=bucket_exposures[bucket],
+            bucket_exposure=bucket_projected[bucket],
         )
-        if scaled_position is None:
-            decisions.append(_rejected_decision(position=position, violations=pre_violations, warnings=pre_warnings, scaling=scaling))
+        warnings.extend(scale_warnings)
+        if violations or scaled is None:
+            rejected.append(_rejected_decision(position=position, violations=violations, warnings=scale_warnings, scaling=scaling))
             continue
 
-        position_value = position.entry_price * position.requested_quantity
-        risk_payload = _build_risk_request(
+        risk_request = _build_risk_request(
             payload=payload,
-            position=scaled_position,
+            position=scaled,
             current_total_exposure=projected_total,
-            bucket_exposure=bucket_exposures[bucket],
+            bucket_exposure=bucket_projected[bucket],
         )
-        response = check_order(risk_payload)
+        response = check_order(risk_request)
         data = response.data or {}
-        approved = bool(data.get('approved'))
-        final_quantity = float(data.get('final_quantity') or 0.0)
-        approved_value = position.entry_price * final_quantity
-        warnings = list(dict.fromkeys(pre_warnings + (data.get('warnings', []) or [])))
-        violations = data.get('violations', []) or []
-
-        if approved:
+        if data.get('approved'):
+            approved_value = scaled.entry_price * scaled.requested_quantity
             projected_total += approved_value
-            bucket_exposures[bucket] += approved_value
-            if sector:
-                sector_exposures[sector] += approved_value
+            bucket_projected[bucket] += approved_value
+            total_approved_value += approved_value
+            approved.append(
+                {
+                    'symbol': str(scaled.symbol).upper(),
+                    'approved': True,
+                    'status': 'approved',
+                    'strategy_bucket': bucket,
+                    'target_weight': _target_weight(position),
+                    'allocation_pct': position.portfolio_context.get('allocation_pct'),
+                    'target_value': position.portfolio_context.get('target_value'),
+                    'requested_quantity': position.requested_quantity,
+                    'final_quantity': scaled.requested_quantity,
+                    'requested_value': round(requested_value, 2),
+                    'approved_value': round(approved_value, 2),
+                    'risk_response': data,
+                    'warnings': data.get('warnings') or [],
+                }
+            )
+        else:
+            rejected.append(
+                _rejected_decision(
+                    position=position,
+                    violations=data.get('violations') or ['risk_check_rejected'],
+                    warnings=data.get('warnings') or [],
+                    scaling=scaling,
+                )
+            )
 
-        decisions.append(
-            {
-                'symbol': symbol,
-                'approved': approved,
-                'status': response.status,
-                'strategy_bucket': bucket,
-                'target_weight': risk_payload.target_weight,
-                'allocation_pct': risk_payload.allocation_pct,
-                'target_value': position.portfolio_context.get('target_value'),
-                'requested_quantity': position.requested_quantity,
-                'final_quantity': final_quantity,
-                'requested_value': round(position_value, 2),
-                'approved_value': round(approved_value, 2),
-                'risk_response': {**data, 'warnings': warnings, 'scaling': scaling},
-                'violations': violations,
-                'warnings': warnings,
-                'scaling': scaling,
-            }
-        )
-
-    approved_count = sum(1 for row in decisions if row['approved'])
-    rejected_count = len(decisions) - approved_count
     return StandardResponse(
-        status='approved' if rejected_count == 0 else 'partial' if approved_count else 'rejected',
+        status='success',
         data={
-            'approved': rejected_count == 0,
-            'mode': 'portfolio_allocation',
-            'total_positions': len(decisions),
-            'approved_positions': approved_count,
-            'rejected_positions': rejected_count,
-            'projected_total_exposure': round(projected_total, 2),
-            'projected_bucket_exposures': {bucket: round(value, 2) for bucket, value in bucket_exposures.items()},
-            'projected_sector_exposures': {sector: round(value, 2) for sector, value in sector_exposures.items()},
-            'risk_approvals': decisions,
-            'kill_switch_active': False,
+            'approved': approved,
+            'rejected': rejected,
+            'summary': {
+                'requested_positions': len(payload.positions),
+                'approved_positions': len(approved),
+                'rejected_positions': len(rejected),
+                'requested_value': round(total_requested_value, 2),
+                'approved_value': round(total_approved_value, 2),
+                'current_total_exposure': round(float(payload.current_total_exposure), 2),
+                'projected_total_exposure': round(projected_total, 2),
+                'bucket_projected_exposures': {bucket: round(value, 2) for bucket, value in bucket_projected.items()},
+                'warnings': sorted(set(warnings)),
+            },
+            'safety': {
+                'advisory_only': True,
+                'orders_submitted': False,
+                'execution_submissions': 0,
+            },
         },
-        error=None if rejected_count == 0 else 'portfolio_risk_check_failed',
+        confidence_score=0.83,
     )
