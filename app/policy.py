@@ -38,13 +38,14 @@ MAX_SECTOR_EXPOSURE_PCT = _env_float('MAX_SECTOR_EXPOSURE_PCT', 0.25)
 MIN_EQUITY_FOR_LIVE_STOCK = _env_float('MIN_EQUITY_FOR_LIVE_STOCK', 1000.0)
 
 # Strategy bucket controls for the core-satellite portfolio.
-# Defaults match the requested allocation style:
-# core_dividend=50%, value_rebound=30%, news_momentum=20%.
+# Defaults: core_dividend=50%, value_rebound=30%, quality_growth=20%, news_momentum=20%.
 MAX_CORE_DIVIDEND_BUCKET_PCT = _env_float('MAX_CORE_DIVIDEND_BUCKET_PCT', 0.50)
 MAX_VALUE_REBOUND_BUCKET_PCT = _env_float('MAX_VALUE_REBOUND_BUCKET_PCT', 0.30)
+MAX_QUALITY_GROWTH_BUCKET_PCT = _env_float('MAX_QUALITY_GROWTH_BUCKET_PCT', 0.20)
 MAX_NEWS_MOMENTUM_BUCKET_PCT = _env_float('MAX_NEWS_MOMENTUM_BUCKET_PCT', 0.20)
 MAX_CORE_DIVIDEND_SYMBOL_PCT = _env_float('MAX_CORE_DIVIDEND_SYMBOL_PCT', 0.10)
 MAX_VALUE_REBOUND_SYMBOL_PCT = _env_float('MAX_VALUE_REBOUND_SYMBOL_PCT', 0.07)
+MAX_QUALITY_GROWTH_SYMBOL_PCT = _env_float('MAX_QUALITY_GROWTH_SYMBOL_PCT', 0.10)
 MAX_NEWS_MOMENTUM_SYMBOL_PCT = _env_float('MAX_NEWS_MOMENTUM_SYMBOL_PCT', 0.03)
 
 STRATEGY_BUCKET_LIMITS = {
@@ -55,6 +56,10 @@ STRATEGY_BUCKET_LIMITS = {
     'value_rebound': {
         'max_bucket_pct': MAX_VALUE_REBOUND_BUCKET_PCT,
         'max_symbol_pct': MAX_VALUE_REBOUND_SYMBOL_PCT,
+    },
+    'quality_growth': {
+        'max_bucket_pct': MAX_QUALITY_GROWTH_BUCKET_PCT,
+        'max_symbol_pct': MAX_QUALITY_GROWTH_SYMBOL_PCT,
     },
     'news_momentum': {
         'max_bucket_pct': MAX_NEWS_MOMENTUM_BUCKET_PCT,

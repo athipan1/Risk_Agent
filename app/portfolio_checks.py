@@ -17,8 +17,9 @@ from app.policy import (
 
 BUCKET_PRIORITY = {
     'core_dividend': 0,
-    'value_rebound': 1,
-    'news_momentum': 2,
+    'quality_growth': 1,
+    'value_rebound': 2,
+    'news_momentum': 3,
     'unassigned': 99,
 }
 
@@ -193,7 +194,7 @@ def _build_risk_request(
         asset_class=payload.asset_class,
         sector=_sector_from_position(position),
         current_sector_exposure=float(payload.current_sector_exposures.get(_sector_from_position(position) or '', 0.0)),
-        strategy_bucket=bucket if bucket in {'core_dividend', 'value_rebound', 'news_momentum'} else 'unassigned',
+        strategy_bucket=bucket if bucket in STRATEGY_BUCKET_LIMITS else 'unassigned',
         current_bucket_exposure=bucket_exposure,
         target_weight=_target_weight(position),
         allocation_pct=position.portfolio_context.get('allocation_pct'),

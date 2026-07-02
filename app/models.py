@@ -6,7 +6,7 @@ from pydantic import BaseModel, Field, model_validator
 TradeSide = Literal['buy', 'sell', 'hold']
 TradingMode = Literal['PAPER', 'LIVE']
 AssetClass = Literal['stock', 'xauusd', 'crypto', 'multi']
-StrategyBucket = Literal['core_dividend', 'value_rebound', 'news_momentum', 'unassigned']
+StrategyBucket = Literal['core_dividend', 'quality_growth', 'value_rebound', 'news_momentum', 'unassigned']
 TradePlanStatus = Literal['draft', 'risk_pending', 'risk_approved', 'manual_approval_required', 'execution_ready', 'rejected']
 TradePlanSource = Literal['single_analysis', 'multi_analysis', 'scanner', 'manual', 'replay']
 OrderType = Literal['market', 'limit']
@@ -31,19 +31,15 @@ class RiskCheckRequest(PositionSizeRequest):
     open_orders_exposure: float = Field(ge=0, default=0)
     margin_multiplier: float = Field(gt=0, default=1)
     trading_mode: TradingMode = 'PAPER'
-
     asset_class: AssetClass = 'stock'
     sector: str | None = None
     owned_quantity: float = Field(ge=0, default=0)
     current_sector_exposure: float = Field(ge=0, default=0)
-
     strategy_bucket: StrategyBucket = 'unassigned'
     current_bucket_exposure: float = Field(ge=0, default=0)
-
     target_weight: float | None = Field(default=None, ge=0)
     allocation_pct: float | None = Field(default=None, ge=0)
     target_value: float | None = Field(default=None, ge=0)
-
     daily_realized_pnl: float = 0.0
     weekly_realized_pnl: float = 0.0
     consecutive_losses: int = Field(ge=0, default=0)
@@ -251,3 +247,4 @@ class StandardResponse(BaseModel):
     version: str = '1.0.0'
     data: dict | None = None
     error: str | None = None
+    confidence_score: float | None = None
