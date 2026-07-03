@@ -40,6 +40,8 @@ class RiskCheckRequest(PositionSizeRequest):
     target_weight: float | None = Field(default=None, ge=0)
     allocation_pct: float | None = Field(default=None, ge=0)
     target_value: float | None = Field(default=None, ge=0)
+    take_profit_price: float | None = Field(default=None, gt=0)
+    reward_risk_ratio: float | None = Field(default=None, gt=0)
     daily_realized_pnl: float = 0.0
     weekly_realized_pnl: float = 0.0
     consecutive_losses: int = Field(ge=0, default=0)
@@ -145,6 +147,11 @@ class TradePlanPayload(BaseModel):
                 raise ValueError('buy trade stop_loss must be below entry/limit price')
             if self.side == 'sell' and self.exit.stop_loss <= reference_price:
                 raise ValueError('sell trade stop_loss must be above entry/limit price')
+        if reference_price is not None and self.exit.take_profit is not None:
+            if self.side == 'buy' and self.exit.take_profit <= reference_price:
+                raise ValueError('buy trade take_profit must be above entry/limit price')
+            if self.side == 'sell' and self.exit.take_profit >= reference_price:
+                raise ValueError('sell trade take_profit must be below entry/limit price')
         return self
 
 
