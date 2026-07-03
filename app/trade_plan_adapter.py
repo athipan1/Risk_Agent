@@ -79,6 +79,8 @@ def trade_plan_to_risk_check(payload: TradePlanRiskCheckRequest) -> RiskCheckReq
         target_weight=payload.target_weight,
         allocation_pct=payload.allocation_pct,
         target_value=payload.target_value,
+        take_profit_price=plan.exit.take_profit,
+        reward_risk_ratio=plan.risk.reward_risk_ratio or plan.expected_r,
         daily_realized_pnl=_session_value(session, 'daily_realized_pnl', 0.0),
         weekly_realized_pnl=_session_value(session, 'weekly_realized_pnl', 0.0),
         consecutive_losses=_session_value(session, 'consecutive_losses', 0),
