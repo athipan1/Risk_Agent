@@ -77,6 +77,8 @@ def test_trade_plan_adapter_maps_to_existing_risk_check():
     assert risk_payload.side == 'buy'
     assert risk_payload.entry_price == 100
     assert risk_payload.protection_price == 95
+    assert risk_payload.take_profit_price == 110
+    assert risk_payload.reward_risk_ratio == 2.0
     assert risk_payload.requested_quantity == 5
     assert risk_payload.equity == 10000
     assert risk_payload.strategy_bucket == 'value_rebound'
@@ -95,6 +97,23 @@ def test_trade_plan_check_approves_valid_plan():
     assert body['data']['strategy_bucket'] == 'value_rebound'
     assert body['data']['trade_plan_validation'] == 'checked'
     assert body['data']['guard_plan']['trigger_price'] == 95
+    assert body['data']['guard_plan']['take_profit_price'] == 110
+    assert body['data']['guard_plan']['reward_risk_ratio'] == 2.0
+    assert body['data']['guard_plan']['min_reward_risk_ratio'] == 2.0
+
+
+def test_trade_plan_check_builds_default_two_r_take_profit_when_missing():
+    payload = trade_plan_payload()
+    payload['trade_plan']['exit']['take_profit'] = None
+
+    response = client.post('/risk/trade-plan-check', json=payload)
+    body = response.json()
+
+    assert response.status_code == 200
+    assert body['status'] == 'approved'
+    assert body['data']['guard_plan']['trigger_price'] == 95
+    assert body['data']['guard_plan']['take_profit_price'] == 110
+    assert body['data']['guard_plan']['reward_risk_ratio'] == 2.0
 
 
 def test_trade_plan_check_rejects_missing_stop_loss():
@@ -109,6 +128,17 @@ def test_trade_plan_check_rejects_missing_stop_loss():
     assert body['data']['approved'] is False
     assert 'invalid_trade_plan' in body['data']['violations']
     assert 'exit.stop_loss is required' in body['data']['reason']
+
+
+def test_trade_plan_check_rejects_bad_take_profit_direction():
+    payload = trade_plan_payload()
+    payload['trade_plan']['exit']['take_profit'] = 99
+
+    response = client.post('/risk/trade-plan-check', json=payload)
+    body = response.json()
+
+    assert response.status_code == 422
+    assert 'buy trade take_profit must be above entry/limit price' in response.text
 
 
 def test_trade_plan_check_rejects_live_plan_without_context():
