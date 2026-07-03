@@ -19,15 +19,52 @@ LIVE_REQUIRED_CONTEXT_FIELDS = {
     'emergency_halt',
 }
 
+DEFAULT_REWARD_RISK_RATIO = 2.0
+
+
+def _round_price(value: float) -> float:
+    return round(float(value), 4)
+
+
+def _reward_risk_ratio(payload: RiskCheckRequest) -> float:
+    requested_ratio = payload.reward_risk_ratio or DEFAULT_REWARD_RISK_RATIO
+    return max(float(requested_ratio), DEFAULT_REWARD_RISK_RATIO)
+
+
+def _default_take_profit_price(payload: RiskCheckRequest, reward_risk_ratio: float) -> float:
+    risk_per_share = abs(payload.entry_price - payload.protection_price)
+    reward_distance = risk_per_share * reward_risk_ratio
+    if payload.side == 'buy':
+        return payload.entry_price + reward_distance
+    return payload.entry_price - reward_distance
+
+
+def _take_profit_price(payload: RiskCheckRequest, reward_risk_ratio: float) -> float:
+    return payload.take_profit_price or _default_take_profit_price(payload, reward_risk_ratio)
+
+
+def _actual_reward_risk_ratio(payload: RiskCheckRequest, take_profit_price: float) -> float:
+    risk_per_share = abs(payload.entry_price - payload.protection_price)
+    reward_per_share = abs(take_profit_price - payload.entry_price)
+    if risk_per_share <= 0:
+        return 0.0
+    return reward_per_share / risk_per_share
+
 
 def build_guard_plan(payload: RiskCheckRequest, quantity: float) -> dict:
     exit_side = 'sell' if payload.side == 'buy' else 'buy'
+    reward_risk_ratio = _reward_risk_ratio(payload)
+    take_profit_price = _take_profit_price(payload, reward_risk_ratio)
+    actual_reward_risk_ratio = _actual_reward_risk_ratio(payload, take_profit_price)
     return {
         'account_id': payload.account_id,
         'symbol': payload.symbol,
         'side': exit_side,
         'quantity': quantity,
         'trigger_price': payload.protection_price,
+        'take_profit_price': _round_price(take_profit_price),
+        'reward_risk_ratio': round(actual_reward_risk_ratio, 4),
+        'min_reward_risk_ratio': DEFAULT_REWARD_RISK_RATIO,
         'time_in_force': 'GTC',
         'trading_mode': payload.trading_mode,
         'asset_class': payload.asset_class,
