@@ -1,6 +1,7 @@
+from datetime import datetime, timezone
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 
 TradeSide = Literal['buy', 'sell', 'hold']
@@ -13,6 +14,10 @@ OrderType = Literal['market', 'limit']
 TimeInForce = Literal['GTC', 'IOC', 'FOK']
 PositionSide = Literal['long', 'short']
 ProfitActionName = Literal['hold', 'move_stop', 'partial_exit', 'exit_all']
+
+RISK_AGENT_TYPE = 'risk'
+RISK_AGENT_VERSION = '1.5.0'
+SCHEMA_VERSION = '1.0'
 
 
 class PositionSizeRequest(BaseModel):
@@ -250,8 +255,20 @@ class ProfitPlanGateRequest(BaseModel):
 
 class StandardResponse(BaseModel):
     status: str
-    agent_type: str = 'risk'
-    version: str = '1.0.0'
+    agent_type: str = RISK_AGENT_TYPE
+    version: str = RISK_AGENT_VERSION
+    schema_version: str = SCHEMA_VERSION
+    timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    correlation_id: str | None = None
     data: dict | None = None
-    error: str | None = None
+    metadata: dict[str, Any] = Field(default_factory=dict)
+    error: str | dict | None = None
     confidence_score: float | None = None
+
+    @field_validator('schema_version')
+    @classmethod
+    def schema_version_must_be_semantic(cls, value: str) -> str:
+        parts = value.split('.')
+        if not all(part.isdigit() for part in parts):
+            raise ValueError('Schema version must be in semantic format (e.g., "1.0")')
+        return value
