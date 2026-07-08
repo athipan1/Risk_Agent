@@ -5,7 +5,7 @@ from collections import defaultdict
 from typing import Any
 
 from app.checks import check_order
-from app.kill_switch import rejected_kill_switch_payload
+from app.kill_switch import kill_switch_from_risk_payload, rejected_kill_switch_payload
 from app.models import PortfolioRiskCheckRequest, PortfolioRiskPosition, RiskCheckRequest, StandardResponse
 from app.policy import (
     ALLOW_FRACTIONAL_SHARES,
@@ -14,12 +14,15 @@ from app.policy import (
     MAX_TOTAL_EXPOSURE_PCT,
     STRATEGY_BUCKET_LIMITS,
 )
+from app.strategy_bucket_gate import (
+    classification_fields_from_mapping,
+    evaluate_strategy_bucket_gate,
+)
 
 BUCKET_PRIORITY = {
     'core_dividend': 0,
-    'quality_growth': 1,
-    'value_rebound': 2,
-    'news_momentum': 3,
+    'value_rebound': 1,
+    'news_momentum': 2,
     'unassigned': 99,
 }
 
@@ -34,7 +37,31 @@ def _context_float(context: dict[str, Any], key: str, default: float = 0.0) -> f
 
 def _bucket_from_position(position: PortfolioRiskPosition) -> str:
     context_bucket = position.portfolio_context.get('strategy_bucket') or position.portfolio_context.get('bucket')
-    return str(context_bucket or position.strategy_bucket or 'unassigned')
+    return str(context_bucket or position.strategy_bucket or 'unassigned').strip().lower()
+
+
+def _classification_fields(position: PortfolioRiskPosition) -> dict[str, Any]:
+    context_fields = classification_fields_from_mapping(position.portfolio_context)
+    return {
+        'bucket_confidence': position.bucket_confidence if position.bucket_confidence is not None else context_fields['bucket_confidence'],
+        'classification_status': position.bucket_classification_status or context_fields['classification_status'],
+        'classifier_version': position.bucket_classifier_version or context_fields['classifier_version'],
+        'classification_reasons': position.bucket_classification_reasons or context_fields['classification_reasons'],
+    }
+
+
+def _bucket_gate(position: PortfolioRiskPosition, trading_mode: str):
+    fields = _classification_fields(position)
+    return evaluate_strategy_bucket_gate(
+        side=position.side,
+        strategy_bucket=_bucket_from_position(position),
+        trading_mode=trading_mode,
+        bucket_confidence=fields['bucket_confidence'],
+        classification_status=fields['classification_status'],
+        classifier_version=fields['classifier_version'],
+        classification_reasons=fields['classification_reasons'],
+        require_metadata=position.side == 'buy',
+    )
 
 
 def _sector_from_position(position: PortfolioRiskPosition) -> str | None:
@@ -88,6 +115,15 @@ def _scale_position_to_limits(
     sector = _sector_from_position(position)
     warnings: list[str] = []
     violations: list[str] = []
+
+    if position.side != 'buy':
+        return position, violations, ['risk_reducing_exit_bucket_scaling_bypassed'], {
+            'symbol': symbol,
+            'strategy_bucket': bucket,
+            'requested_quantity': position.requested_quantity,
+            'requested_value': round(position.entry_price * position.requested_quantity, 2),
+            'scaling_reason': 'risk_reducing_exit',
+        }
 
     if bucket not in STRATEGY_BUCKET_LIMITS:
         return None, ['strategy_bucket_unassigned'], warnings, {
@@ -178,6 +214,7 @@ def _build_risk_request(
     session = payload.session_risk_context or {}
     symbol = str(position.symbol).upper()
     bucket = _bucket_from_position(position)
+    classification = _classification_fields(position)
     return RiskCheckRequest(
         account_id=payload.account_id,
         symbol=symbol,
@@ -195,6 +232,10 @@ def _build_risk_request(
         sector=_sector_from_position(position),
         current_sector_exposure=float(payload.current_sector_exposures.get(_sector_from_position(position) or '', 0.0)),
         strategy_bucket=bucket if bucket in STRATEGY_BUCKET_LIMITS else 'unassigned',
+        bucket_confidence=classification['bucket_confidence'],
+        bucket_classification_status=classification['classification_status'],
+        bucket_classifier_version=classification['classifier_version'],
+        bucket_classification_reasons=classification['classification_reasons'],
         current_bucket_exposure=bucket_exposure,
         target_weight=_target_weight(position),
         allocation_pct=position.portfolio_context.get('allocation_pct'),
@@ -228,10 +269,19 @@ def _rejected_decision(
     violations: list[str],
     warnings: list[str],
     scaling: dict[str, Any],
+    strategy_bucket_gate: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     symbol = str(position.symbol).upper()
     bucket = _bucket_from_position(position)
     requested_value = position.entry_price * position.requested_quantity
+    risk_response = {
+        'approved': False,
+        'violations': violations,
+        'warnings': warnings,
+        'scaling': scaling,
+    }
+    if strategy_bucket_gate is not None:
+        risk_response['strategy_bucket_gate'] = strategy_bucket_gate
     return {
         'symbol': symbol,
         'approved': False,
@@ -244,22 +294,19 @@ def _rejected_decision(
         'final_quantity': 0.0,
         'requested_value': round(requested_value, 2),
         'approved_value': 0.0,
-        'risk_response': {'approved': False, 'violations': violations, 'warnings': warnings, 'scaling': scaling},
+        'risk_response': risk_response,
         'violations': violations,
         'warnings': warnings,
         'scaling': scaling,
+        'strategy_bucket_gate': strategy_bucket_gate,
     }
 
 
 def check_portfolio(payload: PortfolioRiskCheckRequest) -> StandardResponse:
     kill_switch_payload = _portfolio_kill_switch_payload(payload)
     if kill_switch_payload is not None:
-        kill_response = check_order(kill_switch_payload)
-        kill_data = kill_response.data or {}
-        if kill_data.get('kill_switch_active'):
-            violations = kill_data.get('violations') or []
-            warnings = kill_data.get('warnings') or []
-            session_risk = kill_data.get('session_risk') or {}
+        kill_switch_active, violations, warnings, session_risk = kill_switch_from_risk_payload(kill_switch_payload)
+        if kill_switch_active:
             return StandardResponse(
                 status='rejected',
                 data={
@@ -301,13 +348,30 @@ def check_portfolio(payload: PortfolioRiskCheckRequest) -> StandardResponse:
 
     ordered_positions = sorted(
         list(payload.positions),
-        key=lambda pos: (BUCKET_PRIORITY.get(_bucket_from_position(pos), 99), -float((pos.score_breakdown or {}).get('final_opportunity_score') or 0.0)),
+        key=lambda pos: (
+            BUCKET_PRIORITY.get(_bucket_from_position(pos), 99),
+            -float((pos.score_breakdown or {}).get('final_opportunity_score') or 0.0),
+        ),
     )
 
     for position in ordered_positions:
         symbol = str(position.symbol).upper()
         bucket = _bucket_from_position(position)
         sector = _sector_from_position(position)
+        bucket_gate_result = _bucket_gate(position, payload.trading_mode)
+        bucket_gate = bucket_gate_result.as_dict()
+
+        if bucket_gate_result.violations:
+            decisions.append(
+                _rejected_decision(
+                    position=position,
+                    violations=list(bucket_gate_result.violations),
+                    warnings=list(bucket_gate_result.warnings),
+                    scaling={'reason': 'strategy_bucket_gate_rejected'},
+                    strategy_bucket_gate=bucket_gate,
+                )
+            )
+            continue
 
         scaled_position, pre_violations, pre_warnings, scaling = _scale_position_to_limits(
             payload=payload,
@@ -315,8 +379,17 @@ def check_portfolio(payload: PortfolioRiskCheckRequest) -> StandardResponse:
             projected_total=projected_total,
             bucket_exposure=bucket_exposures[bucket],
         )
+        pre_warnings = list(dict.fromkeys(list(bucket_gate_result.warnings) + pre_warnings))
         if scaled_position is None:
-            decisions.append(_rejected_decision(position=position, violations=pre_violations, warnings=pre_warnings, scaling=scaling))
+            decisions.append(
+                _rejected_decision(
+                    position=position,
+                    violations=pre_violations,
+                    warnings=pre_warnings,
+                    scaling=scaling,
+                    strategy_bucket_gate=bucket_gate,
+                )
+            )
             continue
 
         position_value = position.entry_price * position.requested_quantity
@@ -334,11 +407,16 @@ def check_portfolio(payload: PortfolioRiskCheckRequest) -> StandardResponse:
         warnings = list(dict.fromkeys(pre_warnings + (data.get('warnings', []) or [])))
         violations = data.get('violations', []) or []
 
-        if approved:
+        if approved and position.side == 'buy':
             projected_total += approved_value
             bucket_exposures[bucket] += approved_value
             if sector:
                 sector_exposures[sector] += approved_value
+        elif approved and position.side == 'sell':
+            projected_total = max(0.0, projected_total - approved_value)
+            bucket_exposures[bucket] = max(0.0, bucket_exposures[bucket] - approved_value)
+            if sector:
+                sector_exposures[sector] = max(0.0, sector_exposures[sector] - approved_value)
 
         decisions.append(
             {
@@ -346,6 +424,7 @@ def check_portfolio(payload: PortfolioRiskCheckRequest) -> StandardResponse:
                 'approved': approved,
                 'status': response.status,
                 'strategy_bucket': bucket,
+                'strategy_bucket_gate': data.get('strategy_bucket_gate') or bucket_gate,
                 'target_weight': risk_payload.target_weight,
                 'allocation_pct': risk_payload.allocation_pct,
                 'target_value': position.portfolio_context.get('target_value'),
