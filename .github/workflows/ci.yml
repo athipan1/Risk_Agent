@@ -41,4 +41,4 @@ jobs:
 
       - name: Run unit tests
         run: |
-          pytest -q
+          pytest -q --tb=short --disable-warnings
