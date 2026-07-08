@@ -2,24 +2,43 @@ from app.models import PortfolioRiskCheckRequest, PortfolioRiskPosition
 from app.portfolio_checks import check_portfolio
 
 
-def _position(symbol, bucket, price=100, qty=10, allocation_pct=50.0, score=0.8, sector='Consumer Defensive'):
+def _position(
+    symbol,
+    bucket,
+    price=100,
+    qty=10,
+    allocation_pct=50.0,
+    score=0.8,
+    sector='Consumer Defensive',
+    side='buy',
+    confidence=0.86,
+    status='classified',
+):
     return PortfolioRiskPosition(
         symbol=symbol,
-        side='buy',
+        side=side,
         entry_price=price,
-        protection_price=round(price * 0.95, 2),
+        protection_price=round(price * (0.95 if side == 'buy' else 1.05), 2),
         requested_quantity=qty,
         strategy_bucket=bucket,
+        bucket_confidence=confidence,
+        bucket_classification_status=status,
+        bucket_classification_reasons=['test_evidence'],
+        bucket_classifier_version='manager-strategy-bucket-v2',
         portfolio_context={
             'bucket': bucket,
             'strategy_bucket': bucket,
+            'bucket_confidence': confidence,
+            'bucket_classification_status': status,
+            'bucket_classification_reasons': ['test_evidence'],
+            'bucket_classifier_version': 'manager-strategy-bucket-v2',
             'target_weight': allocation_pct / 100,
             'allocation_pct': allocation_pct,
             'target_value': 100000 * allocation_pct / 100,
         },
         scanner_candidate={'metadata': {'sector': sector}},
         score_breakdown={'final_opportunity_score': score},
-        final_verdict='buy',
+        final_verdict='buy' if side == 'buy' else 'sell',
     )
 
 
@@ -53,6 +72,7 @@ def test_portfolio_check_approves_selected_positions_with_allocation_context():
     assert response.data['approved_positions'] == 3
     assert [row['symbol'] for row in response.data['risk_approvals']] == ['KO', 'ACGL', 'NEWS']
     assert response.data['risk_approvals'][0]['strategy_bucket'] == 'core_dividend'
+    assert response.data['risk_approvals'][0]['strategy_bucket_gate']['allowed'] is True
     assert response.data['risk_approvals'][0]['allocation_pct'] == 50.0
 
 
@@ -95,7 +115,16 @@ def test_portfolio_check_scales_quantity_to_news_bucket_limit():
 
 def test_portfolio_check_rejects_unassigned_bucket():
     payload = _payload([
-        _position('AAPL', 'unassigned', price=100, qty=1, allocation_pct=0.0, sector='Technology'),
+        _position(
+            'AAPL',
+            'unassigned',
+            price=100,
+            qty=1,
+            allocation_pct=0.0,
+            sector='Technology',
+            confidence=None,
+            status='unassigned',
+        ),
     ])
 
     response = check_portfolio(payload)
@@ -103,7 +132,32 @@ def test_portfolio_check_rejects_unassigned_bucket():
     approval = response.data['risk_approvals'][0]
     assert response.status == 'rejected'
     assert approval['approved'] is False
-    assert approval['violations'] == ['strategy_bucket_unassigned']
+    assert 'strategy_bucket_unassigned' in approval['violations']
+    assert approval['strategy_bucket_gate']['allowed'] is False
+
+
+def test_portfolio_check_rejects_low_confidence_bucket():
+    payload = _payload([
+        _position('AAPL', 'core_dividend', confidence=0.61),
+    ])
+
+    response = check_portfolio(payload)
+
+    approval = response.data['risk_approvals'][0]
+    assert response.status == 'rejected'
+    assert 'strategy_bucket_confidence_below_minimum' in approval['violations']
+
+
+def test_portfolio_check_rejects_conflicting_classification():
+    payload = _payload([
+        _position('AAPL', 'core_dividend', status='conflict'),
+    ])
+
+    response = check_portfolio(payload)
+
+    approval = response.data['risk_approvals'][0]
+    assert response.status == 'rejected'
+    assert 'strategy_bucket_classification_conflict' in approval['violations']
 
 
 def test_portfolio_check_prioritizes_core_before_news_when_total_exposure_is_tight():
@@ -138,3 +192,28 @@ def test_portfolio_check_emergency_halt_rejects_all_positions():
     assert response.status == 'rejected'
     assert response.data['approved_positions'] == 0
     assert all('emergency_halt_active' in row['violations'] for row in response.data['risk_approvals'])
+
+
+def test_portfolio_sell_with_unassigned_bucket_is_not_blocked_and_reduces_exposure():
+    payload = _payload(
+        [
+            _position(
+                'LEGACY',
+                'unassigned',
+                price=100,
+                qty=10,
+                allocation_pct=0,
+                side='sell',
+                confidence=None,
+                status=None,
+            ),
+        ],
+        current_total_exposure=5000,
+    )
+
+    response = check_portfolio(payload)
+
+    approval = response.data['risk_approvals'][0]
+    assert approval['strategy_bucket_gate']['allowed'] is True
+    assert 'strategy_bucket_unassigned_exit_allowed' in approval['strategy_bucket_gate']['warnings']
+    assert response.data['projected_total_exposure'] <= 5000
