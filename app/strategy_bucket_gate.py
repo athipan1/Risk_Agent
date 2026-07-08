@@ -52,10 +52,7 @@ def _normalize_side(value: Any) -> str:
 
 
 def normalize_strategy_bucket(value: Any) -> str:
-    bucket = str(value or UNASSIGNED).strip().lower() or UNASSIGNED
-    if bucket in CONTROLLED_STRATEGY_BUCKETS or bucket == UNASSIGNED:
-        return bucket
-    return bucket
+    return str(value or UNASSIGNED).strip().lower() or UNASSIGNED
 
 
 def _normalize_status(value: Any) -> str | None:
@@ -90,6 +87,7 @@ def evaluate_strategy_bucket_gate(
     classifier_version: Any = None,
     classification_reasons: Iterable[Any] | None = None,
     require_metadata: bool = False,
+    allow_legacy_missing_bucket: bool = False,
 ) -> StrategyBucketGateResult:
     """Validate bucket attribution before Risk approves new exposure.
 
@@ -98,8 +96,8 @@ def evaluate_strategy_bucket_gate(
     unknown, conflicting, invalid, review, or explicitly low-confidence buckets.
 
     Missing classification metadata is required for portfolio/trade-plan flows
-    and for LIVE direct checks. Legacy PAPER direct checks receive a warning so
-    existing diagnostics remain usable during migration.
+    and for LIVE direct checks. A legacy PAPER direct request that omitted the
+    bucket field entirely may be allowed temporarily with an audit warning.
     """
     normalized_side = _normalize_side(side)
     bucket = normalize_strategy_bucket(strategy_bucket)
@@ -130,8 +128,12 @@ def evaluate_strategy_bucket_gate(
             metadata_required=metadata_required,
         )
 
+    legacy_bucket_omission = allow_legacy_missing_bucket and bucket == UNASSIGNED
     if bucket == UNASSIGNED:
-        violations.append("strategy_bucket_unassigned")
+        if legacy_bucket_omission:
+            warnings.append("legacy_strategy_bucket_missing")
+        else:
+            violations.append("strategy_bucket_unassigned")
     elif bucket not in CONTROLLED_STRATEGY_BUCKETS:
         violations.append("unsupported_strategy_bucket")
 
@@ -145,7 +147,7 @@ def evaluate_strategy_bucket_gate(
 
     metadata_missing = confidence is None or status is None or not version
     if metadata_missing:
-        if metadata_required:
+        if metadata_required and not legacy_bucket_omission:
             violations.append("strategy_bucket_classification_metadata_required")
         else:
             warnings.append("strategy_bucket_classification_metadata_missing")
