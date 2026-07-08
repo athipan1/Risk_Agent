@@ -40,5 +40,21 @@ jobs:
           python -c "from app.main import app; print(app.title)"
 
       - name: Run unit tests
+        id: pytest
+        continue-on-error: true
         run: |
-          pytest -q --tb=short --disable-warnings
+          pytest -q --tb=short --disable-warnings > pytest-results.txt 2>&1
+
+      - name: Upload pytest results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pytest-results
+          path: pytest-results.txt
+          if-no-files-found: error
+
+      - name: Fail when unit tests fail
+        if: steps.pytest.outcome == 'failure'
+        run: |
+          cat pytest-results.txt
+          exit 1
