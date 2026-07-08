@@ -19,6 +19,11 @@ def base_payload(**overrides):
         'open_orders_exposure': 0,
         'margin_multiplier': 1,
         'trading_mode': 'LIVE',
+        'strategy_bucket': 'core_dividend',
+        'bucket_confidence': 0.88,
+        'bucket_classification_status': 'classified',
+        'bucket_classification_reasons': ['quality_score:80'],
+        'bucket_classifier_version': 'manager-strategy-bucket-v2',
         'daily_realized_pnl': 0,
         'weekly_realized_pnl': 0,
         'consecutive_losses': 0,
@@ -81,6 +86,7 @@ def test_approves_when_session_limits_are_clear():
     assert response.status_code == 200
     assert body['status'] == 'approved'
     assert body['data']['approved'] is True
+    assert body['data']['strategy_bucket_gate']['allowed'] is True
     assert body['data']['session_risk']['trades_today'] == 0
     assert body['data']['guard_plan']['side'] == 'sell'
 
