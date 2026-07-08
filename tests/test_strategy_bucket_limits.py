@@ -1,3 +1,6 @@
+import pytest
+from pydantic import ValidationError
+
 from app.models import RiskCheckRequest
 from app.stock_limits import check_stock_limits
 
@@ -29,30 +32,9 @@ def test_core_dividend_allows_up_to_ten_percent_per_symbol():
     assert metrics['max_bucket_exposure'] == 50000.0
 
 
-def test_quality_growth_allows_up_to_ten_percent_per_symbol():
-    payload = _payload(symbol='BKNG', strategy_bucket='quality_growth', requested_quantity=100.0)
-
-    violations, warnings, metrics = check_stock_limits(payload)
-
-    assert 'bucket_symbol_exposure_limit_exceeded' not in violations
-    assert metrics['strategy_bucket'] == 'quality_growth'
-    assert metrics['bucket_max_symbol_exposure'] == 10000.0
-    assert metrics['max_bucket_exposure'] == 20000.0
-
-
-def test_quality_growth_rejects_projected_bucket_above_twenty_percent():
-    payload = _payload(
-        symbol='BKNG',
-        strategy_bucket='quality_growth',
-        requested_quantity=20.0,
-        current_bucket_exposure=19000.0,
-    )
-
-    violations, warnings, metrics = check_stock_limits(payload)
-
-    assert 'bucket_exposure_limit_exceeded' in violations
-    assert metrics['projected_bucket_exposure'] == 21000.0
-    assert metrics['max_bucket_exposure'] == 20000.0
+def test_quality_growth_is_not_a_supported_controlled_bucket():
+    with pytest.raises(ValidationError):
+        _payload(symbol='BKNG', strategy_bucket='quality_growth', requested_quantity=100.0)
 
 
 def test_value_rebound_rejects_above_seven_percent_symbol_weight():
@@ -91,7 +73,7 @@ def test_bucket_exposure_limit_rejects_projected_bucket_over_target():
     assert metrics['max_bucket_exposure'] == 20000.0
 
 
-def test_unassigned_bucket_keeps_global_stock_limit_only():
+def test_unassigned_bucket_keeps_global_stock_limit_only_at_low_level():
     payload = _payload(strategy_bucket='unassigned', requested_quantity=100.0)
 
     violations, warnings, metrics = check_stock_limits(payload)

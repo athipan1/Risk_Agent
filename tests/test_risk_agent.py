@@ -18,6 +18,16 @@ def live_session_context():
     }
 
 
+def classified_bucket_context():
+    return {
+        'strategy_bucket': 'core_dividend',
+        'bucket_confidence': 0.88,
+        'bucket_classification_status': 'classified',
+        'bucket_classification_reasons': ['quality_score:80'],
+        'bucket_classifier_version': 'manager-strategy-bucket-v2',
+    }
+
+
 def test_health():
     response = client.get('/health')
     assert response.status_code == 200
@@ -95,6 +105,7 @@ def test_live_rejects_missing_context_fields():
         'requested_quantity': 5,
         'equity': 10000,
         'trading_mode': 'LIVE',
+        **classified_bucket_context(),
     }
     response = client.post('/risk/check', json=payload)
     body = response.json()
@@ -130,12 +141,14 @@ def test_live_allows_explicit_zero_context_fields():
         'open_orders_exposure': 0,
         'margin_multiplier': 1,
         'trading_mode': 'LIVE',
+        **classified_bucket_context(),
         **live_session_context(),
     }
     response = client.post('/risk/check', json=payload)
     body = response.json()
     assert response.status_code == 200
     assert 'live_context_required' not in body['data']['violations']
+    assert body['data']['strategy_bucket_gate']['allowed'] is True
     assert body['data']['trading_mode'] == 'LIVE'
     assert body['data']['current_total_exposure'] == 0
     assert body['data']['open_orders_exposure'] == 0
@@ -157,6 +170,7 @@ def test_paper_keeps_default_context_backward_compatible():
     assert response.status_code == 200
     assert 'live_context_required' not in body['data']['violations']
     assert body['data']['projected_total_exposure'] == 500
+    assert 'legacy_strategy_bucket_missing' in body['data']['warnings']
 
 
 def test_open_orders_exposure_counts_toward_portfolio_limit():
@@ -173,6 +187,7 @@ def test_open_orders_exposure_counts_toward_portfolio_limit():
         'open_orders_exposure': 600,
         'margin_multiplier': 1,
         'trading_mode': 'LIVE',
+        **classified_bucket_context(),
         **live_session_context(),
     }
     response = client.post('/risk/check', json=payload)

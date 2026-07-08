@@ -34,7 +34,17 @@ def portfolio_position(symbol='AAPL'):
         protection_price=95.0,
         requested_quantity=10.0,
         strategy_bucket='core_dividend',
-        portfolio_context={'strategy_bucket': 'core_dividend'},
+        bucket_confidence=0.88,
+        bucket_classification_status='classified',
+        bucket_classification_reasons=['quality_score:80'],
+        bucket_classifier_version='manager-strategy-bucket-v2',
+        portfolio_context={
+            'strategy_bucket': 'core_dividend',
+            'bucket_confidence': 0.88,
+            'bucket_classification_status': 'classified',
+            'bucket_classification_reasons': ['quality_score:80'],
+            'bucket_classifier_version': 'manager-strategy-bucket-v2',
+        },
     )
 
 
@@ -52,6 +62,10 @@ def trade_plan_payload(session_context):
             'final_quantity': 10.0,
             'strategy': 'test',
             'strategy_bucket': 'core_dividend',
+            'bucket_confidence': 0.88,
+            'bucket_classification_status': 'classified',
+            'bucket_classification_reasons': ['quality_score:80'],
+            'bucket_classifier_version': 'manager-strategy-bucket-v2',
             'final_verdict': 'buy',
             'confidence_score': 0.8,
             'risk': {

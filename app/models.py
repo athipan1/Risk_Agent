@@ -7,7 +7,8 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 TradeSide = Literal['buy', 'sell', 'hold']
 TradingMode = Literal['PAPER', 'LIVE']
 AssetClass = Literal['stock', 'xauusd', 'crypto', 'multi']
-StrategyBucket = Literal['core_dividend', 'quality_growth', 'value_rebound', 'news_momentum', 'unassigned']
+StrategyBucket = Literal['core_dividend', 'value_rebound', 'news_momentum', 'unassigned']
+BucketClassificationStatus = Literal['classified', 'review', 'conflict', 'invalid', 'unassigned']
 TradePlanStatus = Literal['draft', 'risk_pending', 'risk_approved', 'manual_approval_required', 'execution_ready', 'rejected']
 TradePlanSource = Literal['single_analysis', 'multi_analysis', 'scanner', 'manual', 'replay']
 OrderType = Literal['market', 'limit']
@@ -16,7 +17,7 @@ PositionSide = Literal['long', 'short']
 ProfitActionName = Literal['hold', 'move_stop', 'partial_exit', 'exit_all']
 
 RISK_AGENT_TYPE = 'risk'
-RISK_AGENT_VERSION = '1.5.0'
+RISK_AGENT_VERSION = '1.6.0'
 SCHEMA_VERSION = '1.0'
 
 
@@ -41,6 +42,10 @@ class RiskCheckRequest(PositionSizeRequest):
     owned_quantity: float = Field(ge=0, default=0)
     current_sector_exposure: float = Field(ge=0, default=0)
     strategy_bucket: StrategyBucket = 'unassigned'
+    bucket_confidence: float | None = Field(default=None, ge=0, le=1)
+    bucket_classification_status: BucketClassificationStatus | None = None
+    bucket_classification_reasons: list[str] = Field(default_factory=list)
+    bucket_classifier_version: str | None = None
     current_bucket_exposure: float = Field(ge=0, default=0)
     target_weight: float | None = Field(default=None, ge=0)
     allocation_pct: float | None = Field(default=None, ge=0)
@@ -130,6 +135,10 @@ class TradePlanPayload(BaseModel):
     time_in_force: TimeInForce = 'GTC'
     strategy: str = 'unassigned'
     strategy_bucket: StrategyBucket = 'unassigned'
+    bucket_confidence: float | None = Field(default=None, ge=0, le=1)
+    bucket_classification_status: BucketClassificationStatus | None = None
+    bucket_classification_reasons: list[str] = Field(default_factory=list)
+    bucket_classifier_version: str | None = None
     final_verdict: str
     confidence_score: float = Field(ge=0, le=1)
     expected_r: float | None = None
@@ -186,6 +195,10 @@ class PortfolioRiskPosition(BaseModel):
     protection_price: float = Field(gt=0)
     requested_quantity: float = Field(ge=0)
     strategy_bucket: StrategyBucket = 'unassigned'
+    bucket_confidence: float | None = Field(default=None, ge=0, le=1)
+    bucket_classification_status: BucketClassificationStatus | None = None
+    bucket_classification_reasons: list[str] = Field(default_factory=list)
+    bucket_classifier_version: str | None = None
     portfolio_context: dict[str, Any] = Field(default_factory=dict)
     scanner_candidate: dict[str, Any] | None = None
     score_breakdown: dict[str, Any] | None = None
