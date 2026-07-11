@@ -17,6 +17,7 @@ from app.models import (
 from app.policy import POLICY
 from app.portfolio_checks import check_portfolio
 from app.profit_plan_gate import check_profit_plan_gate
+from app.protection_plan import ProtectionPlanRequest, build_protection_plan
 from app.sizing import calculate_position_size
 from app.trade_plan_adapter import check_trade_plan
 
@@ -62,6 +63,7 @@ def ready():
             'ready_for_stock_paper': True,
             'ready_for_stock_live': ready_for_stock_live,
             'ready_for_risk_gate': ready_for_risk_gate,
+            'ready_for_protection_planning': True,
             'stock_only_mode': stock_only_mode,
             'allow_short_selling': POLICY.get('allow_short_selling', False),
             'allow_fractional_shares': POLICY.get('allow_fractional_shares', False),
@@ -95,6 +97,7 @@ def health():
             'trade_plan_controls': True,
             'manager_decision_gate': True,
             'profit_plan_gate': True,
+            'existing_position_protection_planning': True,
             'stock_only_mode': POLICY.get('stock_only_mode', True),
             'allow_short_selling': POLICY.get('allow_short_selling', False),
             'emergency_halt': POLICY.get('emergency_halt', False),
@@ -123,6 +126,7 @@ def risk_status():
             'ready_for_trade_plan_check': True,
             'ready_for_manager_decision_gate': True,
             'ready_for_profit_plan_gate': True,
+            'ready_for_protection_planning': True,
             'stock_only_mode': POLICY.get('stock_only_mode', True),
             'allow_short_selling': POLICY.get('allow_short_selling', False),
             'allow_fractional_shares': POLICY.get('allow_fractional_shares', False),
@@ -167,3 +171,14 @@ def manager_decision_gate(payload: ManagerGateRequest):
 @app.post('/risk/profit-plan-gate', response_model=StandardResponse)
 def profit_plan_gate(payload: ProfitPlanGateRequest):
     return check_profit_plan_gate(payload)
+
+
+@app.post('/risk/protection-plan', response_model=StandardResponse)
+def protection_plan(payload: ProtectionPlanRequest):
+    return standard_response(
+        data=build_protection_plan(payload),
+        metadata={
+            'contract': 'risk-existing-position-protection-v1',
+            'broker_mutation': False,
+        },
+    )
