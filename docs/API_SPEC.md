@@ -10,6 +10,14 @@ Returns service status.
 
 Returns active policy.
 
+## POST /risk/halt
+
+Trips the persistent runtime emergency halt. Requires `X-Admin-Token` matching `ADMIN_TOKEN` and a JSON body with a non-blank `reason`.
+
+## POST /risk/halt/clear
+
+Clears the persistent runtime emergency halt. Requires the same admin authentication plus a non-blank `reason` and `confirm: true`.
+
 ## POST /risk/position-size
 
 Calculates safe quantity using trade loss limit and max position value.

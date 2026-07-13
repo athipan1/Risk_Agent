@@ -1,5 +1,6 @@
 from app.models import PositionSizeRequest, StandardResponse
 from app.policy import MAX_POSITION_PCT, MAX_TRADE_LOSS_PCT, MIN_PROTECTION_DISTANCE_PCT
+from app.runtime_halt import is_emergency_halt_active
 
 
 def has_bad_protection_direction(side: str, entry_price: float, protection_price: float) -> bool:
@@ -11,6 +12,17 @@ def has_bad_protection_direction(side: str, entry_price: float, protection_price
 
 
 def calculate_position_size(payload: PositionSizeRequest) -> StandardResponse:
+    if is_emergency_halt_active():
+        return StandardResponse(
+            status='rejected',
+            data={
+                'approved': False,
+                'approved_quantity': 0.0,
+                'violations': ['emergency_halt_active'],
+            },
+            error='emergency_halt_active',
+        )
+
     if payload.side == 'hold':
         return StandardResponse(status='success', data={'approved_quantity': 0.0})
 

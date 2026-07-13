@@ -29,6 +29,22 @@ class PositionSizeRequest(BaseModel):
     equity: float = Field(gt=0)
 
 
+class EmergencyHaltRequest(BaseModel):
+    reason: str = Field(min_length=1, max_length=500)
+
+    @field_validator('reason')
+    @classmethod
+    def reason_must_not_be_blank(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError('reason must not be blank')
+        return value
+
+
+class EmergencyHaltClearRequest(EmergencyHaltRequest):
+    confirm: Literal[True]
+
+
 class RiskCheckRequest(PositionSizeRequest):
     account_id: int
     requested_quantity: float = Field(ge=0)
