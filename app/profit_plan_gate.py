@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from app.models import ProfitPlanGateRequest, ProfitPlanAction, StandardResponse
-from app.policy import POLICY
+from app.runtime_halt import is_emergency_halt_active
 
 MOVE_STOP = 'move_stop'
 PARTIAL_EXIT = 'partial_exit'
@@ -26,7 +26,7 @@ def check_profit_plan_gate(payload: ProfitPlanGateRequest) -> StandardResponse:
     approved_actions: list[dict] = []
     rejected_actions: list[dict] = []
 
-    if POLICY.get('emergency_halt', False):
+    if is_emergency_halt_active():
         violations.append('emergency_halt_active')
 
     if payload.trading_mode == 'LIVE':

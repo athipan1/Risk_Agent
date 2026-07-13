@@ -4,4 +4,12 @@ services:
     container_name: risk-agent
     ports:
       - "8007:8007"
+    environment:
+      ADMIN_TOKEN: ${ADMIN_TOKEN:-}
+      EMERGENCY_HALT_FILE: /data/emergency_halt.flag
+    volumes:
+      - risk-agent-data:/data
     restart: unless-stopped
+
+volumes:
+  risk-agent-data:

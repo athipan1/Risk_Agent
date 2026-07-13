@@ -1,7 +1,6 @@
 from app.models import RiskCheckRequest
 from app.policy import (
     COOLDOWN_MINUTES_AFTER_LOSS_STREAK,
-    EMERGENCY_HALT,
     MAX_CONSECUTIVE_LOSSES,
     MAX_DAILY_LOSS_PCT,
     MAX_SYMBOL_TRADES_PER_DAY,
@@ -9,6 +8,7 @@ from app.policy import (
     MAX_WEEKLY_LOSS_PCT,
     SYMBOL_COOLDOWN_MINUTES,
 )
+from app.runtime_halt import is_emergency_halt_active
 
 
 def _loss_pct(realized_pnl: float, equity: float) -> float:
@@ -30,7 +30,8 @@ def check_session_limits(payload: RiskCheckRequest) -> tuple[list[str], list[str
     daily_loss_pct = _loss_pct(payload.daily_realized_pnl, payload.equity)
     weekly_loss_pct = _loss_pct(payload.weekly_realized_pnl, payload.equity)
 
-    if EMERGENCY_HALT or payload.emergency_halt:
+    emergency_halt = is_emergency_halt_active() or payload.emergency_halt
+    if emergency_halt:
         violations.append('emergency_halt_active')
 
     if daily_loss_pct >= MAX_DAILY_LOSS_PCT:
@@ -71,7 +72,7 @@ def check_session_limits(payload: RiskCheckRequest) -> tuple[list[str], list[str
         'symbol_trades_today': payload.symbol_trades_today,
         'minutes_since_last_loss': payload.minutes_since_last_loss,
         'minutes_since_last_symbol_trade': payload.minutes_since_last_symbol_trade,
-        'emergency_halt': bool(EMERGENCY_HALT or payload.emergency_halt),
+        'emergency_halt': emergency_halt,
         'limits': {
             'max_daily_loss_pct': MAX_DAILY_LOSS_PCT,
             'max_weekly_loss_pct': MAX_WEEKLY_LOSS_PCT,

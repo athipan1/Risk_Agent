@@ -1,8 +1,10 @@
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI
 
 from app.checks import check_order
 from app.manager_gate import check_manager_gate
 from app.models import (
+    EmergencyHaltClearRequest,
+    EmergencyHaltRequest,
     ManagerGateRequest,
     PortfolioRiskCheckRequest,
     PositionSizeRequest,
@@ -20,8 +22,18 @@ from app.profit_plan_gate import check_profit_plan_gate
 from app.protection_plan import ProtectionPlanRequest, build_protection_plan
 from app.sizing import calculate_position_size
 from app.trade_plan_adapter import check_trade_plan
+from app.runtime_halt import (
+    clear_emergency_halt,
+    is_emergency_halt_active,
+    require_admin_token,
+    trip_emergency_halt,
+)
 
 app = FastAPI(title='Risk Agent', version=RISK_AGENT_VERSION)
+
+
+def active_policy() -> dict:
+    return {**POLICY, 'emergency_halt': is_emergency_halt_active()}
 
 
 def standard_response(*, data: dict, status: str = 'success', error=None, metadata: dict | None = None):
@@ -50,7 +62,7 @@ def version():
 
 @app.get('/ready', response_model=StandardResponse)
 def ready():
-    emergency_halt = POLICY.get('emergency_halt', False)
+    emergency_halt = is_emergency_halt_active()
     stock_only_mode = POLICY.get('stock_only_mode', True)
     ready_for_stock_live = not emergency_halt and stock_only_mode
     ready_for_risk_gate = not emergency_halt
@@ -60,7 +72,7 @@ def ready():
         status='success' if is_ready else 'error',
         data={
             'ready': is_ready,
-            'ready_for_stock_paper': True,
+            'ready_for_stock_paper': not emergency_halt,
             'ready_for_stock_live': ready_for_stock_live,
             'ready_for_risk_gate': ready_for_risk_gate,
             'ready_for_protection_planning': True,
@@ -85,6 +97,7 @@ def ready():
 
 @app.get('/health')
 def health():
+    emergency_halt = is_emergency_halt_active()
     return {
         'status': 'ok',
         'agent_type': RISK_AGENT_TYPE,
@@ -100,7 +113,7 @@ def health():
             'existing_position_protection_planning': True,
             'stock_only_mode': POLICY.get('stock_only_mode', True),
             'allow_short_selling': POLICY.get('allow_short_selling', False),
-            'emergency_halt': POLICY.get('emergency_halt', False),
+            'emergency_halt': emergency_halt,
             'max_daily_loss_pct': POLICY.get('max_daily_loss_pct'),
             'max_weekly_loss_pct': POLICY.get('max_weekly_loss_pct'),
             'max_single_stock_pct': POLICY.get('max_single_stock_pct'),
@@ -112,20 +125,21 @@ def health():
 
 @app.get('/risk/policy')
 def get_policy():
-    return StandardResponse(status='success', data=POLICY)
+    return StandardResponse(status='success', data=active_policy())
 
 
 @app.get('/risk/status')
 def risk_status():
+    emergency_halt = is_emergency_halt_active()
     return StandardResponse(
         status='success',
         data={
-            'ready_for_stock_paper': True,
-            'ready_for_stock_live': not POLICY.get('emergency_halt', False) and POLICY.get('stock_only_mode', True),
-            'ready_for_portfolio_allocation': True,
-            'ready_for_trade_plan_check': True,
+            'ready_for_stock_paper': not emergency_halt,
+            'ready_for_stock_live': not emergency_halt and POLICY.get('stock_only_mode', True),
+            'ready_for_portfolio_allocation': not emergency_halt,
+            'ready_for_trade_plan_check': not emergency_halt,
             'ready_for_manager_decision_gate': True,
-            'ready_for_profit_plan_gate': True,
+            'ready_for_profit_plan_gate': not emergency_halt,
             'ready_for_protection_planning': True,
             'stock_only_mode': POLICY.get('stock_only_mode', True),
             'allow_short_selling': POLICY.get('allow_short_selling', False),
@@ -137,9 +151,31 @@ def risk_status():
                 'max_daily_loss_pct': POLICY.get('max_daily_loss_pct'),
                 'max_weekly_loss_pct': POLICY.get('max_weekly_loss_pct'),
                 'max_consecutive_losses': POLICY.get('max_consecutive_losses'),
-                'emergency_halt': POLICY.get('emergency_halt', False),
+                'emergency_halt': emergency_halt,
             },
         },
+    )
+
+
+@app.post('/risk/halt', response_model=StandardResponse)
+def halt(
+    payload: EmergencyHaltRequest,
+    _: None = Depends(require_admin_token),
+):
+    return standard_response(
+        data=trip_emergency_halt(payload.reason),
+        metadata={'control': 'runtime_emergency_halt'},
+    )
+
+
+@app.post('/risk/halt/clear', response_model=StandardResponse)
+def clear_halt(
+    payload: EmergencyHaltClearRequest,
+    _: None = Depends(require_admin_token),
+):
+    return standard_response(
+        data=clear_emergency_halt(payload.reason, confirm=payload.confirm),
+        metadata={'control': 'runtime_emergency_halt'},
     )
 
 
