@@ -71,6 +71,13 @@ def _trade_plan_classification_fields(plan) -> dict[str, Any]:
     }
 
 
+def _shadow_execution_requested(plan) -> bool:
+    metadata = plan.metadata or {}
+    execution_mode = str(metadata.get('execution_mode') or '').strip().lower()
+    lane = str(metadata.get('lane') or '').strip().lower()
+    return execution_mode == 'shadow' or lane == 'shadow'
+
+
 def trade_plan_to_risk_check(payload: TradePlanRiskCheckRequest) -> RiskCheckRequest:
     """Convert a Manager TradePlan into the existing RiskCheckRequest contract."""
     plan = payload.trade_plan
@@ -135,6 +142,25 @@ def trade_plan_to_risk_check(payload: TradePlanRiskCheckRequest) -> RiskCheckReq
 
 def check_trade_plan(payload: TradePlanRiskCheckRequest) -> StandardResponse:
     """Validate a TradePlan by reusing the existing order risk engine."""
+    if _shadow_execution_requested(payload.trade_plan):
+        return StandardResponse(
+            status='rejected',
+            data={
+                'approved': False,
+                'approved_quantity': 0.0,
+                'final_quantity': 0.0,
+                'violations': ['shadow_lane_execution_forbidden'],
+                'warnings': [],
+                'trade_plan_id': payload.trade_plan.plan_id,
+                'correlation_id': payload.trade_plan.correlation_id,
+                'risk_approval_id': None,
+                'trade_plan_validation': 'shadow_hard_block',
+                'execution_mode': 'shadow',
+                'broker_order_authorized': False,
+            },
+            error='risk_check_failed',
+        )
+
     try:
         risk_payload = trade_plan_to_risk_check(payload)
     except ValueError as exc:
