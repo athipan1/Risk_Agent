@@ -341,6 +341,7 @@ def check_portfolio(payload: PortfolioRiskCheckRequest) -> StandardResponse:
     projected_total = float(payload.current_total_exposure)
     bucket_exposures = defaultdict(float)
     sector_exposures = defaultdict(float)
+    symbol_exposures = {str(symbol).upper(): float(value) for symbol, value in payload.current_symbol_exposures.items()}
     for bucket, value in payload.current_bucket_exposures.items():
         bucket_exposures[str(bucket)] = float(value or 0.0)
     for sector, value in payload.current_sector_exposures.items():
@@ -351,6 +352,7 @@ def check_portfolio(payload: PortfolioRiskCheckRequest) -> StandardResponse:
         key=lambda pos: (
             BUCKET_PRIORITY.get(_bucket_from_position(pos), 99),
             -float((pos.score_breakdown or {}).get('final_opportunity_score') or 0.0),
+            str(pos.symbol).upper(),
         ),
     )
 
@@ -373,8 +375,14 @@ def check_portfolio(payload: PortfolioRiskCheckRequest) -> StandardResponse:
             )
             continue
 
+        # Every candidate must see reservations approved earlier in this batch,
+        # not the original snapshot. Never mutate the caller's broker snapshot.
+        projected_payload = payload.model_copy(update={
+            'current_symbol_exposures': dict(symbol_exposures),
+            'current_sector_exposures': dict(sector_exposures),
+        })
         scaled_position, pre_violations, pre_warnings, scaling = _scale_position_to_limits(
-            payload=payload,
+            payload=projected_payload,
             position=position,
             projected_total=projected_total,
             bucket_exposure=bucket_exposures[bucket],
@@ -394,7 +402,7 @@ def check_portfolio(payload: PortfolioRiskCheckRequest) -> StandardResponse:
 
         position_value = position.entry_price * position.requested_quantity
         risk_payload = _build_risk_request(
-            payload=payload,
+            payload=projected_payload,
             position=scaled_position,
             current_total_exposure=projected_total,
             bucket_exposure=bucket_exposures[bucket],
@@ -410,11 +418,13 @@ def check_portfolio(payload: PortfolioRiskCheckRequest) -> StandardResponse:
         if approved and position.side == 'buy':
             projected_total += approved_value
             bucket_exposures[bucket] += approved_value
+            symbol_exposures[symbol] = symbol_exposures.get(symbol, 0.0) + approved_value
             if sector:
                 sector_exposures[sector] += approved_value
         elif approved and position.side == 'sell':
             projected_total = max(0.0, projected_total - approved_value)
             bucket_exposures[bucket] = max(0.0, bucket_exposures[bucket] - approved_value)
+            symbol_exposures[symbol] = max(0.0, symbol_exposures.get(symbol, 0.0) - approved_value)
             if sector:
                 sector_exposures[sector] = max(0.0, sector_exposures[sector] - approved_value)
 
@@ -452,6 +462,7 @@ def check_portfolio(payload: PortfolioRiskCheckRequest) -> StandardResponse:
             'projected_total_exposure': round(projected_total, 2),
             'projected_bucket_exposures': {bucket: round(value, 2) for bucket, value in bucket_exposures.items()},
             'projected_sector_exposures': {sector: round(value, 2) for sector, value in sector_exposures.items()},
+            'projected_symbol_exposures': {symbol: round(value, 2) for symbol, value in symbol_exposures.items()},
             'risk_approvals': decisions,
             'kill_switch_active': False,
         },

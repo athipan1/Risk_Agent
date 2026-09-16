@@ -78,12 +78,13 @@ def test_portfolio_check_approves_selected_positions_with_allocation_context():
 
 def test_portfolio_check_rejects_when_later_position_exceeds_bucket_exposure():
     payload = _payload([
-        _position('KO', 'core_dividend', price=100, qty=100, allocation_pct=50.0),
-        _position('JNJ', 'core_dividend', price=100, qty=100, allocation_pct=50.0),
-        _position('PEP', 'core_dividend', price=100, qty=100, allocation_pct=50.0),
-        _position('PG', 'core_dividend', price=100, qty=100, allocation_pct=50.0),
-        _position('CL', 'core_dividend', price=100, qty=100, allocation_pct=50.0),
-        _position('KMB', 'core_dividend', price=100, qty=100, allocation_pct=50.0),
+        # Independent sectors isolate the bucket cap from the sector cap.
+        _position('KO', 'core_dividend', qty=100, score=.96, sector='Sector1'),
+        _position('JNJ', 'core_dividend', qty=100, score=.95, sector='Sector2'),
+        _position('PEP', 'core_dividend', qty=100, score=.94, sector='Sector3'),
+        _position('PG', 'core_dividend', qty=100, score=.93, sector='Sector4'),
+        _position('CL', 'core_dividend', qty=100, score=.92, sector='Sector5'),
+        _position('KMB', 'core_dividend', qty=100, score=.91, sector='Sector6'),
     ])
 
     response = check_portfolio(payload)
